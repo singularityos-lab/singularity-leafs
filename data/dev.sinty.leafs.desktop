@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Leafs
+GenericName=Terminal
+Comment=A minimal multi-pane terminal
+Icon=dev.sinty.leafs
+Exec=singularity-leafs
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;console;leafs;
+StartupNotify=true
+StartupWMClass=dev.sinty.leafs

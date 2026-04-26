@@ -1,0 +1,5 @@
+Template(class: "SingularityAppsLeafsWindow", parent: "SingularityWidgetsWindow") {
+
+    HBox(id: "leaves_box", spacing: 0, hexpand: true, vexpand: true)
+
+}

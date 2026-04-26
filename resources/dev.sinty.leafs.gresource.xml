@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/dev/sinty/leafs">
+    <file preprocess="xml-stripblanks">ui/main.ui</file>
+  </gresource>
+</gresources>

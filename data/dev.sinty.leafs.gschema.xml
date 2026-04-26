@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="dev.sinty.leafs" path="/dev/sinty/leafs/">
+    <key name="font-size" type="i">
+      <default>11</default>
+      <summary>Font Size</summary>
+      <description>The size of the terminal font.</description>
+    </key>
+    <key name="font-family" type="s">
+      <default>'Monospace'</default>
+      <summary>Font Family</summary>
+      <description>The font family used for the terminal.</description>
+    </key>
+    <key name="color-scheme" type="s">
+      <default>'auto'</default>
+      <summary>Color Scheme</summary>
+      <description>The color scheme to use for terminal panes.</description>
+    </key>
+    <key name="scrollback-lines" type="i">
+      <default>10000</default>
+      <summary>Scrollback Lines</summary>
+      <description>Number of lines to keep in the scrollback buffer.</description>
+    </key>
+    <key name="session" type="s">
+      <default>''</default>
+      <summary>Saved Session</summary>
+      <description>JSON array of open pane data (id, cwd) restored on next launch.</description>
+    </key>
+    <key name="ssh-sessions" type="as">
+      <default>[]</default>
+      <summary>Saved SSH sessions (JSON)</summary>
+      <description>List of SSH sessions as JSON strings.</description>
+    </key>
+  </schema>
+</schemalist>

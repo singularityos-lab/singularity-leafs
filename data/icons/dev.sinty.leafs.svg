@@ -1,0 +1,46 @@
+<svg width="236" height="236" viewBox="0 0 236 236" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip_leafs)">
+<g transform="rotate(30, 118, 120)">
+  <path d="M 118 26 C 80 56, 40 94, 48 142 C 55 178, 88 204, 118 214 C 148 204, 181 178, 188 142 C 196 94, 156 56, 118 26 Z"
+    fill="rgba(0,0,0,0.28)" transform="translate(4,5)"/>
+  <path d="M 118 26 C 80 56, 40 94, 48 142 C 55 178, 88 204, 118 214 C 148 204, 181 178, 188 142 C 196 94, 156 56, 118 26 Z"
+    fill="#14532d" transform="translate(-2,0)"/>
+  <path d="M 118 26 C 80 56, 40 94, 48 142 C 55 178, 88 204, 118 214 C 148 204, 181 178, 188 142 C 196 94, 156 56, 118 26 Z"
+    fill="#166534" transform="translate(-1,1)"/>
+  <path d="M 118 26 C 80 56, 40 94, 48 142 C 55 178, 88 204, 118 214 C 148 204, 181 178, 188 142 C 196 94, 156 56, 118 26 Z"
+    fill="url(#leaf_grad)"/>
+  <mask id="leaf_mask" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="236" height="236">
+    <path d="M 118 26 C 80 56, 40 94, 48 142 C 55 178, 88 204, 118 214 C 148 204, 181 178, 188 142 C 196 94, 156 56, 118 26 Z" fill="white"/>
+  </mask>
+  <g mask="url(#leaf_mask)">
+    <path d="M 118 26 C 80 56, 40 94, 48 142 C 55 178, 88 204, 118 214 C 148 204, 181 178, 188 142 C 196 94, 156 56, 118 26 Z"
+      fill="url(#leaf_bloom)"/>
+    <ellipse cx="86" cy="74" rx="36" ry="20" fill="rgba(255,255,255,0.15)" transform="rotate(-30 86 74)"/>
+    <path d="M 118 32 Q 115 120, 118 208" stroke="rgba(0,60,0,0.3)" stroke-width="2.5" fill="none"/>
+    <path d="M 114 90 Q 77 100, 58 124" stroke="rgba(0,60,0,0.22)" stroke-width="1.5" fill="none"/>
+    <path d="M 112 118 Q 70 130, 55 154" stroke="rgba(0,60,0,0.2)" stroke-width="1.4" fill="none"/>
+    <path d="M 114 146 Q 78 156, 66 173" stroke="rgba(0,60,0,0.16)" stroke-width="1.2" fill="none"/>
+    <path d="M 122 90 Q 159 100, 178 124" stroke="rgba(0,60,0,0.22)" stroke-width="1.5" fill="none"/>
+    <path d="M 124 118 Q 162 130, 177 154" stroke="rgba(0,60,0,0.2)" stroke-width="1.4" fill="none"/>
+    <path d="M 122 146 Q 156 156, 168 173" stroke="rgba(0,60,0,0.16)" stroke-width="1.2" fill="none"/>
+  </g>
+</g>
+<path d="M 91 112 L 115 126 L 91 140"
+  fill="none" stroke="rgba(0,0,0,0.82)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="120" y="137" width="28" height="5.5" rx="2.8" fill="rgba(0,0,0,0.82)"/>
+</g>
+<defs>
+<linearGradient id="leaf_grad" x1="118" y1="26" x2="118" y2="214" gradientUnits="userSpaceOnUse">
+  <stop offset="0%" stop-color="#4ade80"/>
+  <stop offset="42%" stop-color="#22c55e"/>
+  <stop offset="100%" stop-color="#15803d"/>
+</linearGradient>
+<radialGradient id="leaf_bloom" cx="80" cy="65" r="110" gradientUnits="userSpaceOnUse">
+  <stop offset="0%" stop-color="white" stop-opacity="0.28"/>
+  <stop offset="100%" stop-color="white" stop-opacity="0"/>
+</radialGradient>
+<clipPath id="clip_leafs">
+  <rect width="236" height="236" fill="white"/>
+</clipPath>
+</defs>
+</svg>
