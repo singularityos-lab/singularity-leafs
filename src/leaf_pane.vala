@@ -26,10 +26,10 @@ namespace Singularity.Apps {
         private int                                    _bug_counter  = 0;
 
         // Bug pane resize
-        private int    _bug_height       = 80;
+        private int    _bug_height       = 200;
         private double _drag_start_height = 0;
         private const int BUG_MIN_HEIGHT = 60;
-        private const int BUG_MAX_HEIGHT = 100;
+        private const int BUG_MAX_HEIGHT = 600;
 
         public signal void close_requested     (LeafPane pane);
         public signal void add_requested       (LeafPane pane);
@@ -181,10 +181,14 @@ namespace Singularity.Apps {
 
             var bug_sep = new Gtk.Separator (Orientation.HORIZONTAL);
             bug_sep.add_css_class ("leaf-sep");
-            bug_sep.set_size_request (-1, 6);
+            bug_sep.add_css_class ("leaf-bug-separator");
+            bug_sep.set_size_request (-1, 4);
+            // Make the separator area easier to grab by adding padding
+            bug_sep.margin_top = 4;
+            bug_sep.margin_bottom = 4;
             bug_sep.cursor = new Gdk.Cursor.from_name ("ns-resize", null);
 
-            // Drag to resize bug pane (drag up = taller, drag down = shorter)
+            // Drag to resize bug pane, track cumulative offset for reliability
             var drag = new Gtk.GestureDrag ();
             drag.drag_begin.connect ((x, y) => {
                 _drag_start_height = _bug_height;
@@ -192,6 +196,10 @@ namespace Singularity.Apps {
             drag.drag_update.connect ((dx, dy) => {
                 int nh = (int)(_drag_start_height - dy);
                 _bug_height = nh.clamp (BUG_MIN_HEIGHT, BUG_MAX_HEIGHT);
+                _bug_host.set_size_request (-1, _bug_height);
+            });
+            drag.drag_end.connect ((dx, dy) => {
+                // Snap final height
                 _bug_host.set_size_request (-1, _bug_height);
             });
             bug_sep.add_controller (drag);
@@ -264,7 +272,7 @@ namespace Singularity.Apps {
 
             var vte = new Vte.Terminal ();
             vte.hexpand = true;
-            vte.vexpand = true;
+            vte.vexpand = false;
             _apply_settings_to (vte, _settings);
 
             string shell = GLib.Environment.get_variable ("SHELL") ?? "/bin/bash";

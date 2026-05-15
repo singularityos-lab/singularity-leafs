@@ -51,19 +51,26 @@ namespace Singularity.Apps {
             settings.changed["scrollback-lines"].connect ((_k) => apply_settings_to_all ());
 
             // When "auto" theme is active, re-apply whenever system accent or dark-mode changes
-            desktop_settings = new GLib.Settings ("dev.sinty.desktop");
-            desktop_settings.changed["accent-color"].connect ((_k) => {
-                if (settings.get_string ("color-scheme") == "auto")
-                    apply_settings_to_all ();
-            });
-            desktop_settings.changed["custom-accent-color"].connect ((_k) => {
-                if (settings.get_string ("color-scheme") == "auto")
-                    apply_settings_to_all ();
-            });
-            desktop_settings.changed["dark-mode"].connect ((_k) => {
-                if (settings.get_string ("color-scheme") == "auto")
-                    apply_settings_to_all ();
-            });
+            try {
+                desktop_settings = new GLib.Settings ("dev.sinty.desktop");
+            } catch (Error e) {
+                warning ("Leafs: dev.sinty.desktop settings unavailable: %s", e.message);
+                desktop_settings = null;
+            }
+            if (desktop_settings != null) {
+                desktop_settings.changed["accent-color"].connect ((_k) => {
+                    if (settings.get_string ("color-scheme") == "auto")
+                        apply_settings_to_all ();
+                });
+                desktop_settings.changed["custom-accent-color"].connect ((_k) => {
+                    if (settings.get_string ("color-scheme") == "auto")
+                        apply_settings_to_all ();
+                });
+                desktop_settings.changed["dark-mode"].connect ((_k) => {
+                    if (settings.get_string ("color-scheme") == "auto")
+                        apply_settings_to_all ();
+                });
+            }
         }
 
         protected override void activate () {
@@ -580,6 +587,17 @@ namespace Singularity.Apps {
                 background-color: transparent;
                 min-width: 8px;
                 min-height: 8px;
+            }
+            /* Bug terminal separator - draggable resize handle */
+            .leaf-bug-separator {
+                min-height: 4px;
+                min-width: 4px;
+                background-color: alpha(@text_color, 0.12);
+                border-radius: 2px;
+                margin: 4px 8px;
+            }
+            .leaf-bug-separator:hover {
+                background-color: alpha(@accent_color, 0.5);
             }
         """;
     }
