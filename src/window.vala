@@ -18,7 +18,6 @@ namespace Singularity.Apps {
             set_default_size (600, 600);
             toolbar.is_static = false;
             toolbar.visible = false;
-            leaves_box.homogeneous = true;
             set_content (leaves_box);
         }
     }

@@ -232,7 +232,6 @@ namespace Singularity.Apps {
         }
 
         private void rebuild_separators () {
-            // Remove all current separators
             Gtk.Widget? child = main_window.leaves_box.get_first_child ();
             var to_remove = new ArrayList<Gtk.Widget> ();
             while (child != null) {
@@ -241,7 +240,6 @@ namespace Singularity.Apps {
             }
             foreach (var w in to_remove) main_window.leaves_box.remove (w);
 
-            // Re-insert separators between each pair of leaves
             for (int i = 0; i < leaves.size - 1; i++) {
                 var sep = new Gtk.Separator (Orientation.VERTICAL);
                 sep.add_css_class ("leaf-sep");

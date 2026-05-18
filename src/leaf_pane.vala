@@ -182,13 +182,17 @@ namespace Singularity.Apps {
             var bug_sep = new Gtk.Separator (Orientation.HORIZONTAL);
             bug_sep.add_css_class ("leaf-sep");
             bug_sep.add_css_class ("leaf-bug-separator");
-            bug_sep.set_size_request (-1, 4);
-            // Make the separator area easier to grab by adding padding
-            bug_sep.margin_top = 4;
-            bug_sep.margin_bottom = 4;
-            bug_sep.cursor = new Gdk.Cursor.from_name ("ns-resize", null);
+            bug_sep.set_size_request (-1, 12);
+            bug_sep.margin_top = 6;
+            bug_sep.margin_bottom = 6;
+            bug_sep.cursor = new Gdk.Cursor.from_name ("row-resize", null);
 
-            // Drag to resize bug pane, track cumulative offset for reliability
+            var sep_event = new Gtk.Box (Orientation.HORIZONTAL, 0);
+            sep_event.set_size_request (-1, 24);
+            sep_event.cursor = new Gdk.Cursor.from_name ("row-resize", null);
+            sep_event.append (bug_sep);
+            sep_event.valign = Gtk.Align.CENTER;
+
             var drag = new Gtk.GestureDrag ();
             drag.drag_begin.connect ((x, y) => {
                 _drag_start_height = _bug_height;
@@ -199,12 +203,11 @@ namespace Singularity.Apps {
                 _bug_host.set_size_request (-1, _bug_height);
             });
             drag.drag_end.connect ((dx, dy) => {
-                // Snap final height
                 _bug_host.set_size_request (-1, _bug_height);
             });
-            bug_sep.add_controller (drag);
+            sep_event.add_controller (drag);
 
-            _bug_host.append (bug_sep);
+            _bug_host.append (sep_event);
             append (_bug_host);
 
             // Chip bar - visible only when at least one bug exists.
