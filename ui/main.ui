@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <template class="SingularityAppsLeafsWindow" parent="SingularityWidgetsWindow">
+    <object class="GtkBox" id="leaves_box">
+      <property name="hexpand">true</property>
+      <property name="orientation">horizontal</property>
+      <property name="spacing">0</property>
+      <property name="vexpand">true</property>
+    </object>
+  </template>
+</interface>
