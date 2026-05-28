@@ -12,6 +12,8 @@ namespace Singularity.Apps {
         private Singularity.Widgets.HoverControls hover_controls;
         public  string      pane_id;
         public  Gtk.Button  ssh_btn;
+        public int shell_pid = 0;
+        public string? ssh_host = null;
 
         // Kept alive to prevent Vala from freeing popovers while GTK still uses them.
         private Singularity.Widgets.ContextMenu? _add_menu   = null;
@@ -33,6 +35,8 @@ namespace Singularity.Apps {
 
         public signal void close_requested     (LeafPane pane);
         public signal void add_requested       (LeafPane pane);
+        public signal void flower_requested    ();    
+        public signal void detach_requested    (LeafPane pane); 
         public signal void settings_requested  ();
         public signal void close_all_requested ();
         public signal void reorder_requested    (LeafPane source, LeafPane target);
@@ -100,8 +104,21 @@ namespace Singularity.Apps {
                 null, -1, null,
                 (t, pid, err) => {
                     if (err != null) warning ("LeafPane spawn: %s", err.message);
+                    else shell_pid = (int) pid;
                 }
             );
+
+            if (spawn_cmd != null && spawn_cmd.length > 0 &&
+                (spawn_cmd[0] == "ssh" || spawn_cmd[0].has_suffix ("/ssh") ||
+                 spawn_cmd[0] == "mosh" || spawn_cmd[0].has_suffix ("/mosh"))) {
+                for (int i = spawn_cmd.length - 1; i >= 1; i--) {
+                    string a = spawn_cmd[i];
+                    if (a.length == 0 || a.has_prefix ("-")) continue;
+                    int at = a.index_of ("@");
+                    ssh_host = at >= 0 ? a.substring (at + 1) : a;
+                    break;
+                }
+            }
 
             // HoverControls da libsingularity - hover e styling già inclusi
             hover_controls = new Singularity.Widgets.HoverControls ();
@@ -143,6 +160,10 @@ namespace Singularity.Apps {
                 _add_menu.set_pointing_to (rect);
                 _add_menu.add_item ("New Leaf",    "list-add-symbolic",    () => add_requested (this));
                 _add_menu.add_item ("New Bug",     "go-down-symbolic",     () => _spawn_bug ());
+                _add_menu.add_item ("New Flower",  "window-new-symbolic",  () => flower_requested ());
+                _add_menu.add_separator ();
+                _add_menu.add_item ("Detach Leaf to Flower", "window-restore-symbolic",
+                    () => detach_requested (this));
                 _add_menu.closed.connect (() => { _add_menu.unparent (); _add_menu = null; });
                 _add_menu.popup ();
             });
@@ -226,7 +247,7 @@ namespace Singularity.Apps {
                 menu.set_pointing_to (rect);
                 if (terminal.get_has_selection ())
                     menu.add_item ("Copy", "edit-copy-symbolic", () => terminal.copy_clipboard_format (Vte.Format.TEXT));
-                menu.add_item ("Paste", "edit-paste-symbolic", () => terminal.paste_clipboard ());
+                menu.add_item ("Paste", "edit-paste-symbolic", () => smart_paste (terminal));
                 menu.add_separator ();
                 menu.add_item ("Clear", "edit-clear-symbolic", () => terminal.reset (true, true));
                 menu.popup ();
@@ -239,6 +260,64 @@ namespace Singularity.Apps {
             _apply_settings_to (terminal, settings);
             foreach (var vte in _bugs.values)
                 _apply_settings_to (vte, settings);
+        }
+
+        // Counter for tmp filenames; doesn't need to be persisted.
+        private static int _paste_counter = 0;
+
+        /**
+         * Paste from the clipboard, but if the clipboard contains an image
+         * instead of text, save it to /tmp/leafs-paste-<n>.png and feed the
+         * path to the terminal. This is what other "modern" terminals
+         * (kitty, wezterm, ghostty, claude-code) do.
+         *
+         * For plain-text clipboards we just call paste_clipboard as before.
+         */
+        public static void smart_paste (Vte.Terminal vte) {
+            var display = Gdk.Display.get_default ();
+            if (display == null) { vte.paste_clipboard (); return; }
+            var clip = display.get_clipboard ();
+            var formats = clip.get_formats ();
+
+            // Heuristic: text takes precedence over image (covers the common
+            // case of copy-pasting URLs / paths from a file manager that
+            // also expose a thumbnail). Only divert to image when there's
+            // NO usable text but there IS image data.
+            bool has_text = formats.contain_mime_type ("text/plain")
+                         || formats.contain_mime_type ("text/plain;charset=utf-8")
+                         || formats.contain_mime_type ("UTF8_STRING")
+                         || formats.contain_gtype (typeof (string));
+            bool has_image = formats.contain_mime_type ("image/png")
+                          || formats.contain_mime_type ("image/jpeg")
+                          || formats.contain_mime_type ("image/bmp")
+                          || formats.contain_gtype (typeof (Gdk.Texture))
+                          || formats.contain_gtype (typeof (Gdk.Pixbuf));
+
+            if (!has_image || has_text) {
+                vte.paste_clipboard ();
+                return;
+            }
+
+            // Async-read the texture, then save + feed the path.
+            clip.read_texture_async.begin (null, (obj, res) => {
+                try {
+                    var tex = clip.read_texture_async.end (res);
+                    if (tex == null) { vte.paste_clipboard (); return; }
+                    string dir = "%s/leafs-pasted".printf (GLib.Environment.get_tmp_dir ());
+                    GLib.DirUtils.create_with_parents (dir, 0700);
+                    string path = "%s/img-%d-%d.png".printf (dir,
+                        (int) GLib.get_real_time () / 1000000,
+                        ++_paste_counter);
+                    tex.save_to_png (path);
+                    // Feed quoted path into the shell. Quoting protects spaces
+                    // and special chars; trailing space lets the user keep typing.
+                    string quoted = GLib.Shell.quote (path);
+                    vte.feed_child ((quoted + " ").data);
+                } catch (Error e) {
+                    warning ("leafs smart_paste: %s; falling back to text paste", e.message);
+                    vte.paste_clipboard ();
+                }
+            });
         }
 
         private void _apply_settings (GLib.Settings settings) {
@@ -314,7 +393,7 @@ namespace Singularity.Apps {
                 menu.set_pointing_to (rect);
                 if (vte.get_has_selection ())
                     menu.add_item ("Copy", "edit-copy-symbolic", () => vte.copy_clipboard_format (Vte.Format.TEXT));
-                menu.add_item ("Paste", "edit-paste-symbolic", () => vte.paste_clipboard ());
+                menu.add_item ("Paste", "edit-paste-symbolic", () => smart_paste (vte));
                 menu.add_separator ();
                 menu.add_item ("Clear", "edit-clear-symbolic", () => vte.reset (true, true));
                 menu.popup ();

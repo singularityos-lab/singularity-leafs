@@ -38,7 +38,9 @@ executable('singularity-leafs',
     'src/app.vala',
     resources,
   ],
-  dependencies: [gtk_dep, gee_dep, vte_dep, json_dep, libsingularity_dep],
+  dependencies: [gtk_dep, gee_dep, vte_dep, json_dep, libsingularity_dep,
+                 meson.get_compiler('c').find_library('m', required: true)],
+  vala_args: ['--pkg=posix'],
   install: true
 )
 
