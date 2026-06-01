@@ -25,9 +25,49 @@ namespace Singularity.Apps {
             return leaf_window.has_key(leaf) ? leaf_window[leaf] : main_window;
         }
 
+        // Command passed via `-e`/`--` on the command line, to run in the
+        // first leaf instead of restoring the previous session. Lets Leafs act
+        // as a terminal emulator target (e.g. for GAppInfo NEEDS_TERMINAL).
+        private string[]? _startup_cmd = null;
+
         public LeafsApp () {
             Object (application_id: "dev.sinty.leafs",
-                    flags: ApplicationFlags.DEFAULT_FLAGS);
+                    flags: ApplicationFlags.HANDLES_COMMAND_LINE);
+        }
+
+        // Pull the command to run out of a terminal-style argv: everything
+        // after the first `-e`, `-x`, `--command` or `--` token. A single
+        // remaining argument containing spaces is shell-split.
+        private string[]? extract_exec_command (string[] argv) {
+            for (int i = 1; i < argv.length; i++) {
+                string a = argv[i];
+                if (a == "-e" || a == "-x" || a == "--command" || a == "--") {
+                    string[] rest = {};
+                    for (int j = i + 1; j < argv.length; j++) rest += argv[j];
+                    if (rest.length == 0) return null;
+                    if (rest.length == 1 && (" " in rest[0])) {
+                        try {
+                            string[] parsed;
+                            GLib.Shell.parse_argv (rest[0], out parsed);
+                            return parsed;
+                        } catch (Error e) { /* fall through to raw */ }
+                    }
+                    return rest;
+                }
+            }
+            return null;
+        }
+
+        protected override int command_line (ApplicationCommandLine cmdline) {
+            string[] argv = cmdline.get_arguments ();
+            string[]? cmd = extract_exec_command (argv);
+            if (cmd != null) _startup_cmd = cmd;
+            activate ();
+            return 0;
+        }
+
+        private void add_leaf_cmd (string[] cmd) {
+            insert_leaf_after (null, null, null, cmd);
         }
 
         protected override void startup () {
@@ -102,14 +142,25 @@ namespace Singularity.Apps {
         protected override void activate () {
             if (main_window != null) {
                 main_window.present ();
+                if (_startup_cmd != null) {
+                    add_leaf_cmd (_startup_cmd);
+                    _startup_cmd = null;
+                }
                 return;
             }
             build_window ();
             leaves       = new ArrayList<LeafPane> ();
             ssh_sessions = new ArrayList<SshSession> ();
             load_ssh_sessions ();
-            restore_session ();
-            if (leaves.is_empty) add_leaf (null, null);
+            if (_startup_cmd != null) {
+                // Launched as a terminal for a specific command: skip session
+                // restore and open just that command.
+                add_leaf_cmd (_startup_cmd);
+                _startup_cmd = null;
+            } else {
+                restore_session ();
+                if (leaves.is_empty) add_leaf (null, null);
+            }
             main_window.present ();
         }
 
