@@ -34,6 +34,21 @@ namespace Singularity.Apps {
             base.startup ();
             setup_styles ();
 
+            var menu = new GLib.Menu ();
+            var file_menu = new GLib.Menu ();
+            file_menu.append ("Settings", "app.settings");
+            file_menu.append ("Quit", "app.quit");
+            menu.append_submenu ("File", file_menu);
+            set_menubar (menu);
+
+            var act_settings = new SimpleAction ("settings", null);
+            act_settings.activate.connect (() => show_settings ());
+            add_action (act_settings);
+
+            var act_quit = new SimpleAction ("quit", null);
+            act_quit.activate.connect (() => quit ());
+            add_action (act_quit);
+
             // Load settings schema
             var source = SettingsSchemaSource.get_default ();
             if (source.lookup ("dev.sinty.leafs", true) == null) {
