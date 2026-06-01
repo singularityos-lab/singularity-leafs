@@ -130,7 +130,7 @@ namespace Singularity.Apps {
             var grip_btn = new Button ();
             grip_btn.add_css_class ("flat");
             grip_btn.set_size_request (28, 28);
-            grip_btn.tooltip_text = "Drag Window";
+            grip_btn.tooltip_text = _("Drag Window");
             var grip_icon = new Gtk.Image.from_icon_name ("list-drag-handle-symbolic");
             grip_icon.pixel_size = 14;
             grip_btn.set_child (grip_icon);
@@ -153,7 +153,7 @@ namespace Singularity.Apps {
             hover_controls.add_control (grip_btn);
 
             var add_btn = new Button.from_icon_name ("list-add-symbolic");
-            add_btn.tooltip_text = "New leaf / bug";
+            add_btn.tooltip_text = _("New leaf / bug");
             add_btn.clicked.connect (() => {
                 _add_menu = new Singularity.Widgets.ContextMenu (add_btn);
                 Gdk.Rectangle rect = { 0, 0, 1, 1 };
@@ -170,16 +170,16 @@ namespace Singularity.Apps {
             hover_controls.add_control (add_btn);
 
             ssh_btn = new Button.from_icon_name ("network-server-symbolic");
-            ssh_btn.tooltip_text = "SSH Sessions";
+            ssh_btn.tooltip_text = _("SSH Sessions");
             hover_controls.add_control (ssh_btn);
 
             var settings_btn = new Button.from_icon_name ("emblem-system-symbolic");
-            settings_btn.tooltip_text = "Settings";
+            settings_btn.tooltip_text = _("Settings");
             settings_btn.clicked.connect (() => settings_requested ());
             hover_controls.add_control (settings_btn);
 
             var close_btn = new Button.from_icon_name ("window-close-symbolic");
-            close_btn.tooltip_text = "Close";
+            close_btn.tooltip_text = _("Close");
             close_btn.clicked.connect (() => {
                 _close_menu = new Singularity.Widgets.ContextMenu (close_btn);
                 Gdk.Rectangle rect = { 0, 0, 1, 1 };

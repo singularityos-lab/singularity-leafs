@@ -545,7 +545,7 @@ namespace Singularity.Apps {
             header.margin_top    = 10;
             header.margin_bottom = 8;
 
-            var title_lbl = new Gtk.Label ("SSH Sessions");
+            var title_lbl = new Gtk.Label (_("SSH Sessions"));
             title_lbl.add_css_class ("heading");
             title_lbl.hexpand = true;
             title_lbl.xalign  = 0;
@@ -573,7 +573,7 @@ namespace Singularity.Apps {
             if (ssh_sessions.is_empty) {
                 var empty_row = new Gtk.ListBoxRow ();
                 empty_row.activatable = false;
-                var empty_lbl = new Gtk.Label ("No sessions - click + to add one");
+                var empty_lbl = new Gtk.Label (_("No sessions - click + to add one"));
                 empty_lbl.opacity = 0.5;
                 empty_lbl.margin_top = 14; empty_lbl.margin_bottom = 14;
                 empty_row.set_child (empty_lbl);

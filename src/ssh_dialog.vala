@@ -20,7 +20,7 @@ namespace Singularity.Apps {
 
         public LeafsSshDialog (Gtk.Window parent, SshSession? existing = null) {
             base ((Gtk.Application)parent.application, true);
-            this.set_title (existing != null ? "Edit SSH Session" : "New SSH Session");
+            this.set_title (existing != null ? _("Edit SSH Session") : _("New SSH Session"));
             this.transient_for = parent;
 
             existing_id = existing?.id;
@@ -60,11 +60,11 @@ namespace Singularity.Apps {
             footer.margin_start = 24; footer.margin_end = 24; footer.margin_bottom = 24;
             footer.halign = Gtk.Align.END;
 
-            var cancel_btn = new Button.with_label ("Cancel");
+            var cancel_btn = new Button.with_label (_("Cancel"));
             cancel_btn.add_css_class ("flat");
             cancel_btn.clicked.connect (() => close ());
 
-            var save_btn = new Button.with_label ("Save");
+            var save_btn = new Button.with_label (_("Save"));
             save_btn.add_css_class ("suggested-action");
             save_btn.clicked.connect (on_save_clicked);
 

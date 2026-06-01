@@ -14,7 +14,7 @@ namespace Singularity.Apps {
 
         public LeafsWindow (Gtk.Application app) {
             Object (application: app);
-            set_title ("Leafs");
+            set_title (_("Leafs"));
             set_default_size (600, 600);
             toolbar.is_static = false;
             toolbar.visible = false;
