@@ -120,8 +120,8 @@ namespace Singularity.Apps {
                 }
             }
 
-            // HoverControls da libsingularity - hover e styling già inclusi
             hover_controls = new Singularity.Widgets.HoverControls ();
+            hover_controls.add_css_class ("singularity-hover-on-content");
             hover_controls.hexpand = true;
             hover_controls.vexpand = true;
             hover_controls.set_content (terminal);
