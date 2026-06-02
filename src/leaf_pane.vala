@@ -234,6 +234,8 @@ namespace Singularity.Apps {
             // Chip bar - visible only when at least one bug exists.
             _chip_bar = new Singularity.Widgets.ChipBar ();
             _chip_bar.visible = false;
+            // Session chips can be reordered by dragging them.
+            _chip_bar.reorderable = true;
             _chip_bar.chip_activated.connect (_on_chip_activated);
             _chip_bar.chip_closed.connect    (_on_chip_closed);
             append (_chip_bar);
