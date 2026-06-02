@@ -18,7 +18,7 @@ namespace Singularity.Apps {
         // Extra "flower" windows beyond main_window.
         private ArrayList<LeafsWindow> flowers = new ArrayList<LeafsWindow>();
         private GLib.Settings settings;
-        private GLib.Settings desktop_settings;
+        private GLib.Settings? desktop_settings;
         private ArrayList<SshSession> ssh_sessions;
 
         private LeafsWindow window_of(LeafPane leaf) {
@@ -117,12 +117,7 @@ namespace Singularity.Apps {
             settings.changed["scrollback-lines"].connect ((_k) => apply_settings_to_all ());
 
             // When "auto" theme is active, re-apply whenever system accent or dark-mode changes
-            try {
-                desktop_settings = new GLib.Settings ("dev.sinty.desktop");
-            } catch (Error e) {
-                warning ("Leafs: dev.sinty.desktop settings unavailable: %s", e.message);
-                desktop_settings = null;
-            }
+            desktop_settings = Singularity.Core.safe_settings ("dev.sinty.desktop");
             if (desktop_settings != null) {
                 desktop_settings.changed["accent-color"].connect ((_k) => {
                     if (settings.get_string ("color-scheme") == "auto")
