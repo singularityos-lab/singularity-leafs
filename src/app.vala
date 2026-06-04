@@ -224,15 +224,12 @@ namespace Singularity.Apps {
 
             if (after == null) {
                 leaves.add (leaf);
-                target.leaves_box.append (leaf);
             } else {
                 int idx = leaves.index_of (after);
                 if (idx < 0 || idx >= leaves.size - 1) {
                     leaves.add (leaf);
-                    target.leaves_box.append (leaf);
                 } else {
                     leaves.insert (idx + 1, leaf);
-                    target.leaves_box.insert_child_after (leaf, after);
                 }
             }
 
@@ -281,7 +278,6 @@ namespace Singularity.Apps {
             connect_leaf_signals (leaf);
             leaf_window[leaf] = win;
             leaves.add (leaf);
-            win.leaves_box.append (leaf);
             rebuild_separators_in (win);
 
             win.present ();
@@ -298,11 +294,7 @@ namespace Singularity.Apps {
             foreach (var l in leaves) if (leaf_window[l] == src) siblings++;
             if (siblings <= 1) return;
 
-            // Detach from current window
-            src.leaves_box.remove (leaf);
-            rebuild_separators_in (src);
-
-            // Create a new flower and reparent
+            // Create a new flower and move the leaf into it.
             var win = new LeafsWindow (this);
             win.close_request.connect (() => {
                 save_session ();
@@ -310,7 +302,7 @@ namespace Singularity.Apps {
             });
             flowers.add (win);
             leaf_window[leaf] = win;
-            win.leaves_box.append (leaf);
+            rebuild_separators_in (src);
             rebuild_separators_in (win);
             win.present ();
             leaf.terminal.grab_focus ();
@@ -330,13 +322,8 @@ namespace Singularity.Apps {
             leaves.insert (dst_idx, source);
 
             if (src_win != dst_win) {
-                // Cross-window drag: reparent the widget.
-                src_win.leaves_box.remove (source);
-                dst_win.leaves_box.insert_child_after (source, target);
                 leaf_window[source] = dst_win;
                 rebuild_separators_in (src_win);
-            } else {
-                src_win.leaves_box.insert_child_after (source, target);
             }
             rebuild_separators_in (dst_win);
         }
@@ -367,16 +354,16 @@ namespace Singularity.Apps {
                 // Last leaf in this flower → close just the flower window
                 leaves.remove (pane);
                 leaf_window.unset (pane);
-                win.leaves_box.remove (pane);
                 if (win != main_window) {
                     flowers.remove (win);
                     win.close ();
+                } else {
+                    rebuild_separators_in (win);
                 }
                 return;
             }
             leaves.remove (pane);
             leaf_window.unset (pane);
-            win.leaves_box.remove (pane);
             rebuild_separators_in (win);
         }
 
@@ -400,25 +387,50 @@ namespace Singularity.Apps {
             return bug ?? leaf.terminal;
         }
 
-        // Thin 1px dividers between leaves (rebuilt on add/remove)
+        private void collect_leaf_panes (Gtk.Widget? w, ArrayList<LeafPane> outl) {
+            if (w == null) return;
+            if (w is LeafPane) { outl.add ((LeafPane) w); return; }
+            if (w is Gtk.Paned) {
+                collect_leaf_panes (((Gtk.Paned) w).get_start_child (), outl);
+                collect_leaf_panes (((Gtk.Paned) w).get_end_child (), outl);
+                return;
+            }
+            var c = w.get_first_child ();
+            while (c != null) { collect_leaf_panes (c, outl); c = c.get_next_sibling (); }
+        }
 
+        // Rebuild the window's layout as a chain of horizontal GtkPaned so each
+        // leaf column can be resized by dragging the divider. The model
+        // (`leaves` + `leaf_window`) is the source of truth; this only rebuilds
+        // the widget tree from it.
         private void rebuild_separators_in (LeafsWindow win) {
-            // Clear existing separators
-            Gtk.Widget? child = win.leaves_box.get_first_child ();
-            var to_remove = new ArrayList<Gtk.Widget> ();
-            var window_leaves = new ArrayList<LeafPane> ();
-            while (child != null) {
-                if (child.has_css_class ("leaf-sep")) to_remove.add (child);
-                else if (child is LeafPane)         window_leaves.add ((LeafPane) child);
-                child = child.get_next_sibling ();
-            }
-            foreach (var w in to_remove) win.leaves_box.remove (w);
+            // Unparent every leaf currently shown so clearing the box doesn't
+            // destroy panes that are merely being moved/reordered.
+            var present = new ArrayList<LeafPane> ();
+            var c = win.leaves_box.get_first_child ();
+            while (c != null) { collect_leaf_panes (c, present); c = c.get_next_sibling (); }
+            foreach (var l in present) if (l.get_parent () != null) l.unparent ();
 
-            for (int i = 0; i < window_leaves.size - 1; i++) {
-                var sep = new Gtk.Separator (Orientation.VERTICAL);
-                sep.add_css_class ("leaf-sep");
-                win.leaves_box.insert_child_after (sep, window_leaves.get (i));
+            c = win.leaves_box.get_first_child ();
+            while (c != null) { var nx = c.get_next_sibling (); win.leaves_box.remove (c); c = nx; }
+
+            var wl = new ArrayList<LeafPane> ();
+            foreach (var l in leaves) if (leaf_window.has_key (l) && leaf_window[l] == win) wl.add (l);
+            if (wl.size == 0) return;
+
+            Gtk.Widget root = wl.get (wl.size - 1);
+            for (int i = wl.size - 2; i >= 0; i--) {
+                var paned = new Gtk.Paned (Orientation.HORIZONTAL);
+                paned.add_css_class ("leaf-paned");
+                paned.set_start_child (wl.get (i));
+                paned.set_end_child (root);
+                paned.resize_start_child = true;
+                paned.resize_end_child = true;
+                paned.shrink_start_child = false;
+                paned.shrink_end_child = false;
+                root = paned;
             }
+            win.leaves_box.append (root);
         }
 
         private void show_settings () {
