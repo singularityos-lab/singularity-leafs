@@ -132,6 +132,10 @@ namespace Singularity.Apps {
                         apply_settings_to_all ();
                 });
             }
+            Singularity.Style.StyleManager.get_default ().notify["accent-hex"].connect (() => {
+                if (settings.get_string ("color-scheme") == "auto")
+                    apply_settings_to_all ();
+            });
         }
 
         protected override void activate () {
