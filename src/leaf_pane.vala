@@ -108,6 +108,12 @@ namespace Singularity.Apps {
                 }
             );
 
+            // When the shell exits (e.g. the `exit` command), close this pane
+            // instead of leaving a dead terminal hanging.
+            terminal.child_exited.connect ((status) => {
+                close_requested (this);
+            });
+
             if (spawn_cmd != null && spawn_cmd.length > 0 &&
                 (spawn_cmd[0] == "ssh" || spawn_cmd[0].has_suffix ("/ssh") ||
                  spawn_cmd[0] == "mosh" || spawn_cmd[0].has_suffix ("/mosh"))) {
