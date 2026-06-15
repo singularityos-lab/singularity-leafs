@@ -435,6 +435,11 @@ namespace Singularity.Apps {
                 root = paned;
             }
             win.leaves_box.append (root);
+
+            var shown = new ArrayList<LeafPane> ();
+            var rc = win.leaves_box.get_first_child ();
+            while (rc != null) { collect_leaf_panes (rc, shown); rc = rc.get_next_sibling (); }
+            foreach (var l in shown) l.redraw_terminals ();
         }
 
         private void show_settings () {
@@ -776,15 +781,11 @@ namespace Singularity.Apps {
                 min-width: 8px;
                 min-height: 8px;
             }
-            /* Bug terminal separator - draggable resize handle */
-            .leaf-bug-separator {
-                min-height: 4px;
-                min-width: 4px;
-                background-color: alpha(@text_color, 0.12);
-                border-radius: 2px;
-                margin: 4px 8px;
+            .leaf-bug-paned > separator {
+                background-color: transparent;
+                min-height: 8px;
             }
-            .leaf-bug-separator:hover {
+            .leaf-bug-paned > separator:hover {
                 background-color: alpha(@accent_color, 0.5);
             }
         """;

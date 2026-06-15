@@ -28,8 +28,8 @@ namespace Singularity.Apps {
         private int                                    _bug_counter  = 0;
 
         // Bug pane resize
+        private Gtk.Paned _split;
         private int    _bug_height       = 200;
-        private double _drag_start_height = 0;
         private const int BUG_MIN_HEIGHT = 60;
         private const int BUG_MAX_HEIGHT = 600;
 
@@ -198,44 +198,27 @@ namespace Singularity.Apps {
             });
             hover_controls.add_control (close_btn);
 
-            append (hover_controls);
+            _split = new Gtk.Paned (Orientation.VERTICAL);
+            _split.add_css_class ("leaf-bug-paned");
+            _split.hexpand = true;
+            _split.vexpand = true;
+            _split.resize_start_child = true;
+            _split.resize_end_child   = true;
+            _split.shrink_start_child = false;
+            _split.shrink_end_child   = false;
+            _split.set_start_child (hover_controls);
+            append (_split);
 
-            // Bug host - fixed height, resizable via drag on the separator.
             _bug_host = new Gtk.Box (Orientation.VERTICAL, 0);
             _bug_host.hexpand = true;
-            _bug_host.vexpand = false;
-            _bug_host.visible = false;
+            _bug_host.vexpand = true;
 
-            var bug_sep = new Gtk.Separator (Orientation.HORIZONTAL);
-            bug_sep.add_css_class ("leaf-sep");
-            bug_sep.add_css_class ("leaf-bug-separator");
-            bug_sep.set_size_request (-1, 12);
-            bug_sep.margin_top = 6;
-            bug_sep.margin_bottom = 6;
-            bug_sep.cursor = new Gdk.Cursor.from_name ("row-resize", null);
-
-            var sep_event = new Gtk.Box (Orientation.HORIZONTAL, 0);
-            sep_event.set_size_request (-1, 24);
-            sep_event.cursor = new Gdk.Cursor.from_name ("row-resize", null);
-            sep_event.append (bug_sep);
-            sep_event.valign = Gtk.Align.CENTER;
-
-            var drag = new Gtk.GestureDrag ();
-            drag.drag_begin.connect ((x, y) => {
-                _drag_start_height = _bug_height;
+            _split.notify["position"].connect (() => {
+                if (_active_bug == null) return;
+                int h = _split.get_height ();
+                if (h > 1)
+                    _bug_height = (h - _split.position).clamp (BUG_MIN_HEIGHT, BUG_MAX_HEIGHT);
             });
-            drag.drag_update.connect ((dx, dy) => {
-                int nh = (int)(_drag_start_height - dy);
-                _bug_height = nh.clamp (BUG_MIN_HEIGHT, BUG_MAX_HEIGHT);
-                _bug_host.set_size_request (-1, _bug_height);
-            });
-            drag.drag_end.connect ((dx, dy) => {
-                _bug_host.set_size_request (-1, _bug_height);
-            });
-            sep_event.add_controller (drag);
-
-            _bug_host.append (sep_event);
-            append (_bug_host);
 
             // Chip bar - visible only when at least one bug exists.
             _chip_bar = new Singularity.Widgets.ChipBar ();
@@ -314,7 +297,7 @@ namespace Singularity.Apps {
                     string dir = "%s/leafs-pasted".printf (GLib.Environment.get_tmp_dir ());
                     GLib.DirUtils.create_with_parents (dir, 0700);
                     string path = "%s/img-%d-%d.png".printf (dir,
-                        (int) GLib.get_real_time () / 1000000,
+                        (int) (GLib.get_real_time () / 1000000),
                         ++_paste_counter);
                     tex.save_to_png (path);
                     // Feed quoted path into the shell. Quoting protects spaces
@@ -428,11 +411,31 @@ namespace Singularity.Apps {
             if (vte == null) return;
 
             _bug_host.append (vte);
-            _bug_host.set_size_request (-1, _bug_height);
-            _bug_host.visible = true;
+            if (_split.get_end_child () != _bug_host)
+                _split.set_end_child (_bug_host);
             _active_bug = id;
             _chip_bar.set_active (id);
+            _apply_bug_height ();
             vte.grab_focus ();
+        }
+
+        private void _apply_bug_height () {
+            int h = _split.get_height ();
+            if (h > 1) {
+                _set_split_for_height (h);
+            } else {
+                GLib.Idle.add (() => {
+                    int hh = _split.get_height ();
+                    if (hh > 1) _set_split_for_height (hh);
+                    return GLib.Source.REMOVE;
+                });
+            }
+        }
+
+        private void _set_split_for_height (int h) {
+            int lo = BUG_MIN_HEIGHT;
+            int hi = int.max (lo, h - BUG_MIN_HEIGHT);
+            _split.position = (h - _bug_height).clamp (lo, hi);
         }
 
         private void _deactivate_bug () {
@@ -441,7 +444,8 @@ namespace Singularity.Apps {
                 if (vte != null) _bug_host.remove (vte);
             }
             _active_bug = null;
-            _bug_host.visible = false;
+            if (_split.get_end_child () == _bug_host)
+                _split.set_end_child (null);
             _chip_bar.set_active (null);
             terminal.grab_focus ();
         }
@@ -455,7 +459,8 @@ namespace Singularity.Apps {
                 var vte = _bugs.get (id);
                 if (vte != null) _bug_host.remove (vte);
                 _active_bug = null;
-                _bug_host.visible = false;
+                if (_split.get_end_child () == _bug_host)
+                    _split.set_end_child (null);
             }
             _bugs.unset (id);
             _chip_bar.remove_chip (id);
@@ -486,6 +491,13 @@ namespace Singularity.Apps {
         public Vte.Terminal? get_active_bug () {
             if (_active_bug == null) return null;
             return _bugs.get (_active_bug);
+        }
+
+        public void redraw_terminals () {
+            terminal.queue_resize ();
+            terminal.queue_draw ();
+            var b = get_active_bug ();
+            if (b != null) { b.queue_resize (); b.queue_draw (); }
         }
     }
 
