@@ -20,6 +20,7 @@ namespace Singularity.Apps {
         private GLib.Settings settings;
         private GLib.Settings? desktop_settings;
         private ArrayList<SshSession> ssh_sessions;
+        private ArrayList<BloomDef> blooms;
 
         private LeafsWindow window_of(LeafPane leaf) {
             return leaf_window.has_key(leaf) ? leaf_window[leaf] : main_window;
@@ -31,8 +32,15 @@ namespace Singularity.Apps {
         private string[]? _startup_cmd = null;
 
         public LeafsApp () {
+#if DEVEL
+            Object (application_id: "dev.sinty.leafs-devel",
+                    flags: ApplicationFlags.HANDLES_COMMAND_LINE);
+            GLib.Environment.set_prgname ("dev.sinty.leafs-devel");
+#else
             Object (application_id: "dev.sinty.leafs",
                     flags: ApplicationFlags.HANDLES_COMMAND_LINE);
+            GLib.Environment.set_prgname ("dev.sinty.leafs");
+#endif
         }
 
         // Pull the command to run out of a terminal-style argv: everything
@@ -127,11 +135,11 @@ namespace Singularity.Apps {
                     if (settings.get_string ("color-scheme") == "auto")
                         apply_settings_to_all ();
                 });
-                desktop_settings.changed["dark-mode"].connect ((_k) => {
-                    if (settings.get_string ("color-scheme") == "auto")
-                        apply_settings_to_all ();
-                });
             }
+            Singularity.Style.ThemeMode.get_default ().changed.connect (() => {
+                if (settings.get_string ("color-scheme") == "auto")
+                    apply_settings_to_all ();
+            });
             Singularity.Style.StyleManager.get_default ().notify["accent-hex"].connect (() => {
                 if (settings.get_string ("color-scheme") == "auto")
                     apply_settings_to_all ();
@@ -150,7 +158,9 @@ namespace Singularity.Apps {
             build_window ();
             leaves       = new ArrayList<LeafPane> ();
             ssh_sessions = new ArrayList<SshSession> ();
+            blooms       = new ArrayList<BloomDef> ();
             load_ssh_sessions ();
+            load_blooms ();
             if (_startup_cmd != null) {
                 // Launched as a terminal for a specific command: skip session
                 // restore and open just that command.
@@ -199,6 +209,9 @@ namespace Singularity.Apps {
                         var t = get_focused_terminal ();
                         if (t != null) { LeafPane.smart_paste (t); return true; }
                         return false;
+                    case Gdk.Key.b:
+                        spawn_bloom ("", "");
+                        return true;
                 }
             }
             // Ctrl+Q - save and close all
@@ -248,6 +261,7 @@ namespace Singularity.Apps {
             leaf.detach_requested.connect (detach_leaf_to_flower);
             leaf.settings_requested.connect (show_settings);
             leaf.ssh_btn.clicked.connect (() => show_ssh_popover (leaf.ssh_btn));
+            leaf.bloom_btn.clicked.connect (() => show_bloom_popover (leaf.bloom_btn));
             leaf.close_all_requested.connect (() => {
                 save_session ();
                 close_all_windows ();
@@ -369,6 +383,165 @@ namespace Singularity.Apps {
             leaves.remove (pane);
             leaf_window.unset (pane);
             rebuild_separators_in (win);
+        }
+
+        private int _bloom_cascade = 0;
+
+        private void spawn_bloom (string label, string command) {
+            var leaf = get_focused_leaf ();
+            var win  = leaf != null ? window_of (leaf) : main_window;
+            string? cwd = leaf != null ? leaf.get_working_dir () : null;
+            int off = 24 + (_bloom_cascade % 6) * 28;
+            _bloom_cascade++;
+            Bloom.spawn (settings, win.bloom_overlay, label, command, cwd, off, off);
+        }
+
+        private void load_blooms () {
+            blooms.clear ();
+            foreach (var js in settings.get_strv ("blooms")) {
+                var d = BloomDef.from_json (js);
+                if (d != null) blooms.add (d);
+            }
+        }
+
+        private void save_blooms () {
+            string[] arr = new string[blooms.size];
+            for (int i = 0; i < blooms.size; i++)
+                arr[i] = blooms[i].to_json ();
+            settings.set_strv ("blooms", arr);
+        }
+
+        private void show_bloom_dialog (BloomDef? existing) {
+            var dlg = new LeafsBloomDialog (main_window, existing);
+            dlg.bloom_saved.connect ((def, replacing) => {
+                if (replacing != null) {
+                    int idx = blooms.index_of (replacing);
+                    if (idx >= 0) blooms[idx] = def;
+                    else blooms.add (def);
+                } else {
+                    blooms.add (def);
+                }
+                save_blooms ();
+            });
+            dlg.present ();
+        }
+
+        private void show_bloom_popover (Gtk.Button anchor) {
+            var popover = new Gtk.Popover ();
+            popover.set_parent (anchor);
+            popover.has_arrow = true;
+
+            var root_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+            root_box.set_size_request (290, -1);
+
+            var header = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0);
+            header.margin_start  = 14;
+            header.margin_end    = 6;
+            header.margin_top    = 10;
+            header.margin_bottom = 8;
+
+            var title_lbl = new Gtk.Label (_("Blooms"));
+            title_lbl.add_css_class ("heading");
+            title_lbl.hexpand = true;
+            title_lbl.xalign  = 0;
+
+            var add_btn = new Gtk.Button.from_icon_name ("list-add-symbolic");
+            add_btn.add_css_class ("flat");
+            add_btn.valign = Gtk.Align.CENTER;
+            add_btn.clicked.connect (() => {
+                popover.popdown ();
+                show_bloom_dialog (null);
+            });
+
+            header.append (title_lbl);
+            header.append (add_btn);
+            root_box.append (header);
+            root_box.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
+
+            var list = new Gtk.ListBox ();
+            list.selection_mode = Gtk.SelectionMode.NONE;
+            list.add_css_class ("boxed-list");
+            list.margin_top = 6; list.margin_bottom = 6;
+            list.margin_start = 8; list.margin_end = 8;
+
+            if (blooms.is_empty) {
+                var empty_row = new Gtk.ListBoxRow ();
+                empty_row.activatable = false;
+                var empty_lbl = new Gtk.Label (_("No blooms - click + to add one"));
+                empty_lbl.opacity = 0.5;
+                empty_lbl.margin_top = 14; empty_lbl.margin_bottom = 14;
+                empty_row.set_child (empty_lbl);
+                list.append (empty_row);
+            } else {
+                foreach (var d in blooms) {
+                    var row = new Gtk.ListBoxRow ();
+                    var row_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+                    row_box.margin_start = 8; row_box.margin_end = 4;
+                    row_box.margin_top = 6; row_box.margin_bottom = 6;
+
+                    var icon = new Gtk.Image.from_icon_name ("system-run-symbolic");
+                    icon.pixel_size = 16;
+                    icon.opacity = 0.7;
+
+                    var labels = new Gtk.Box (Gtk.Orientation.VERTICAL, 2);
+                    labels.hexpand = true;
+                    var name_lbl = new Gtk.Label (d.label);
+                    name_lbl.xalign = 0;
+                    name_lbl.halign = Gtk.Align.START;
+                    var sub_lbl = new Gtk.Label (d.command);
+                    sub_lbl.xalign = 0;
+                    sub_lbl.halign = Gtk.Align.START;
+                    sub_lbl.ellipsize = Pango.EllipsizeMode.END;
+                    sub_lbl.add_css_class ("caption");
+                    sub_lbl.opacity = 0.55;
+                    labels.append (name_lbl);
+                    labels.append (sub_lbl);
+
+                    var edit_btn = new Gtk.Button.from_icon_name ("view-more-symbolic");
+                    edit_btn.add_css_class ("flat");
+                    edit_btn.valign = Gtk.Align.CENTER;
+                    edit_btn.clicked.connect (() => {
+                        popover.popdown ();
+                        show_bloom_dialog (d);
+                    });
+
+                    var del_btn = new Gtk.Button.from_icon_name ("user-trash-symbolic");
+                    del_btn.add_css_class ("flat");
+                    del_btn.add_css_class ("destructive-action");
+                    del_btn.valign = Gtk.Align.CENTER;
+                    del_btn.clicked.connect (() => {
+                        blooms.remove (d);
+                        save_blooms ();
+                        popover.popdown ();
+                    });
+
+                    row_box.append (icon);
+                    row_box.append (labels);
+                    row_box.append (edit_btn);
+                    row_box.append (del_btn);
+                    row.set_child (row_box);
+
+                    row.activatable = true;
+                    var gesture = new Gtk.GestureClick ();
+                    gesture.released.connect ((n, x, y) => {
+                        popover.popdown ();
+                        spawn_bloom (d.label, d.command);
+                    });
+                    row.add_controller (gesture);
+
+                    list.append (row);
+                }
+            }
+
+            var scroll = new Gtk.ScrolledWindow ();
+            scroll.hscrollbar_policy = Gtk.PolicyType.NEVER;
+            scroll.max_content_height = 320;
+            scroll.propagate_natural_height = true;
+            scroll.set_child (list);
+            root_box.append (scroll);
+
+            popover.set_child (root_box);
+            popover.popup ();
         }
 
         private void add_leaf_after_focused () {
@@ -787,6 +960,9 @@ namespace Singularity.Apps {
             }
             .leaf-bug-paned > separator:hover {
                 background-color: alpha(@accent_color, 0.5);
+            }
+            .bloom-terminal {
+                padding: 30px 12px 8px 12px;
             }
         """;
     }

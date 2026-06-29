@@ -31,5 +31,10 @@
       <summary>Saved SSH sessions (JSON)</summary>
       <description>List of SSH sessions as JSON strings.</description>
     </key>
+    <key name="blooms" type="as">
+      <default>[]</default>
+      <summary>Saved blooms (JSON)</summary>
+      <description>List of registered bloom commands as JSON strings (label, command).</description>
+    </key>
   </schema>
 </schemalist>

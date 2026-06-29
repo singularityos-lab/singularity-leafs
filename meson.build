@@ -23,6 +23,17 @@ if not meson.is_subproject() and libsingularity_dep.type_name() == 'internal'
   add_project_arguments(['--vapidir=' + libsingularity_vapi_dir], language: 'vala')
 endif
 
+app_id = 'dev.sinty.leafs'
+app_name = 'Leafs'
+icon_src = 'data/icons/dev.sinty.leafs.svg'
+develop_vala_args = []
+if get_option('develop')
+  app_id = 'dev.sinty.leafs-devel'
+  app_name = 'Leafs (Devel)'
+  icon_src = 'data/icons/dev.sinty.leafs-devel.svg'
+  develop_vala_args = ['--define=DEVEL']
+endif
+
 subdir('ui')
 
 resources = gnome.compile_resources(
@@ -38,17 +49,26 @@ executable('singularity-leafs',
     'src/ssh_session.vala',
     'src/ssh_dialog.vala',
     'src/leaf_pane.vala',
+    'src/bloom.vala',
+    'src/bloom_dialog.vala',
     'src/window.vala',
     'src/app.vala',
     resources,
   ],
   dependencies: [gtk_dep, gee_dep, vte_dep, json_dep, libsingularity_dep,
                  meson.get_compiler('c').find_library('m', required: true)],
-  vala_args: ['--pkg=posix'],
+  vala_args: ['--pkg=posix'] + develop_vala_args,
   install: true
 )
 
-install_data('data/dev.sinty.leafs.desktop',
+desktop_conf = configuration_data()
+desktop_conf.set('APP_ID', app_id)
+desktop_conf.set('NAME', app_name)
+configure_file(
+  input: 'data/leafs.desktop.in',
+  output: app_id + '.desktop',
+  configuration: desktop_conf,
+  install: true,
   install_dir: get_option('datadir') / 'applications'
 )
 
@@ -60,6 +80,7 @@ install_data('data/dev.sinty.leafs.json',
   install_dir: get_option('datadir') / 'singularity' / 'app-settings'
 )
 
-install_data('data/icons/dev.sinty.leafs.svg',
+install_data(icon_src,
+  rename: app_id + '.svg',
   install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps'
 )

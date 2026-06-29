@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=@NAME@
+GenericName=Terminal
+Comment=A minimal multi-pane terminal
+Icon=@APP_ID@
+Exec=singularity-leafs
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;console;leafs;
+StartupNotify=true
+StartupWMClass=@APP_ID@

@@ -12,6 +12,7 @@ namespace Singularity.Apps {
         private Singularity.Widgets.HoverControls hover_controls;
         public  string      pane_id;
         public  Gtk.Button  ssh_btn;
+        public  Gtk.Button  bloom_btn;
         public int shell_pid = 0;
         public string? ssh_host = null;
 
@@ -178,6 +179,10 @@ namespace Singularity.Apps {
             ssh_btn = new Button.from_icon_name ("network-server-symbolic");
             ssh_btn.tooltip_text = _("SSH Sessions");
             hover_controls.add_control (ssh_btn);
+
+            bloom_btn = new Button.from_icon_name ("window-restore-symbolic");
+            bloom_btn.tooltip_text = _("Blooms");
+            hover_controls.add_control (bloom_btn);
 
             var settings_btn = new Button.from_icon_name ("emblem-system-symbolic");
             settings_btn.tooltip_text = _("Settings");

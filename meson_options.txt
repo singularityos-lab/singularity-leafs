@@ -1,0 +1,2 @@
+option('develop', type: 'boolean', value: false,
+  description: 'Build a parallel devel instance with a distinct -devel app id and a yellow/black striped icon, so it runs alongside a normal Leafs without merging into it.')
