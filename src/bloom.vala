@@ -5,6 +5,21 @@ using GLib;
 
 namespace Singularity.Apps {
 
+    // The interactive shell for terminals: the account's login shell (passwd)
+    // first, so the terminal honours the user's shell (ush by default), then
+    // $SHELL, then /bin/sh. The graphical session is launched via a /bin/sh
+    // script, so $SHELL alone would not reflect the login shell.
+    internal string resolve_login_shell () {
+        unowned Posix.Passwd? pw = Posix.getpwuid (Posix.getuid ());
+        if (pw != null && pw.pw_shell != null && pw.pw_shell != ""
+            && GLib.FileUtils.test (pw.pw_shell, GLib.FileTest.IS_EXECUTABLE))
+            return pw.pw_shell;
+        string? env = GLib.Environment.get_variable ("SHELL");
+        if (env != null && env != "")
+            return env;
+        return "/bin/sh";
+    }
+
     public class BloomDef : Object {
         public string label;
         public string command;
@@ -51,7 +66,7 @@ namespace Singularity.Apps {
             terminal.add_css_class ("bloom-terminal");
             apply_theme (terminal, settings);
 
-            string shell = GLib.Environment.get_variable ("SHELL") ?? "/bin/bash";
+            string shell = resolve_login_shell ();
             terminal.spawn_async (
                 Vte.PtyFlags.DEFAULT,
                 cwd ?? GLib.Environment.get_home_dir (),

@@ -84,7 +84,7 @@ namespace Singularity.Apps {
                 }
             }
 
-            string shell = GLib.Environment.get_variable ("SHELL") ?? "/bin/bash";
+            string shell = resolve_login_shell ();
             // PROMPT_COMMAND flushes bash history after every command;
             // zsh/fish ignore it harmlessly. This keeps .hist files up to date
             // even if the app is killed instead of closed cleanly.
@@ -353,7 +353,7 @@ namespace Singularity.Apps {
             vte.vexpand = false;
             _apply_settings_to (vte, _settings);
 
-            string shell = GLib.Environment.get_variable ("SHELL") ?? "/bin/bash";
+            string shell = resolve_login_shell ();
             string cwd   = get_working_dir ();
             vte.spawn_async (
                 Vte.PtyFlags.DEFAULT, cwd,
