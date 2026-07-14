@@ -36,5 +36,15 @@
       <summary>Saved blooms (JSON)</summary>
       <description>List of registered bloom commands as JSON strings (label, command).</description>
     </key>
+    <key name="appearance" type="s">
+      <choices>
+        <choice value="system"/>
+        <choice value="light"/>
+        <choice value="dark"/>
+      </choices>
+      <default>"system"</default>
+      <summary>Appearance</summary>
+      <description>Window appearance when running outside the Singularity desktop: follow the system, or force light or dark.</description>
+    </key>
   </schema>
 </schemalist>

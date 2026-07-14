@@ -123,6 +123,7 @@ namespace Singularity.Apps {
             settings.changed["font-family"].connect  ((_k) => apply_settings_to_all ());
             settings.changed["color-scheme"].connect ((_k) => apply_settings_to_all ());
             settings.changed["scrollback-lines"].connect ((_k) => apply_settings_to_all ());
+            settings.changed["appearance"].connect ((_k) => set_app_appearance (settings.get_string ("appearance")));
 
             // When "auto" theme is active, re-apply whenever system accent or dark-mode changes
             desktop_settings = Singularity.Core.safe_settings ("dev.sinty.desktop");
@@ -144,6 +145,8 @@ namespace Singularity.Apps {
                 if (settings.get_string ("color-scheme") == "auto")
                     apply_settings_to_all ();
             });
+
+            set_app_appearance (settings.get_string ("appearance"));
         }
 
         protected override void activate () {
@@ -615,14 +618,56 @@ namespace Singularity.Apps {
             foreach (var l in shown) l.redraw_terminals ();
         }
 
+        private Singularity.Widgets.PreferencesWindow? prefs_win = null;
+
         private void show_settings () {
-            try {
-                Singularity.Shell.ShellService shell = Bus.get_proxy_sync (
-                    BusType.SESSION, "dev.sinty.desktop", "/dev/sinty/Shell");
-                shell.open_app_settings ("dev.sinty.leafs");
-            } catch (Error e) {
-                warning ("Leafs: failed to open settings: %s", e.message);
+            if (Singularity.Runtime.is_shell_running ()) {
+                try {
+                    Singularity.Shell.ShellService shell = Bus.get_proxy_sync (
+                        BusType.SESSION, "dev.sinty.desktop", "/dev/sinty/Shell");
+                    shell.open_app_settings ("dev.sinty.leafs");
+                    return;
+                } catch (Error e) {
+                    warning ("Leafs: failed to open shell settings: %s", e.message);
+                }
             }
+            show_local_settings ();
+        }
+
+        private void show_local_settings () {
+            if (prefs_win != null) { prefs_win.present (); return; }
+
+            var page = new Singularity.Widgets.PreferencesPage ();
+            var group = new Singularity.Widgets.PreferencesGroup (_("Appearance"));
+
+            var theme_row = new Singularity.Widgets.SelectionRow (_("Theme"),
+                { _("System"), _("Light"), _("Dark") },
+                appearance_label (settings.get_string ("appearance")));
+            theme_row.selected.connect ((item) => {
+                string tok = appearance_token (item);
+                if (settings.get_string ("appearance") != tok)
+                    settings.set_string ("appearance", tok);
+            });
+            group.add_row (theme_row);
+            page.append_group (group);
+
+            prefs_win = new Singularity.Widgets.PreferencesWindow (this, page, false);
+            prefs_win.close_request.connect (() => { prefs_win = null; return false; });
+            prefs_win.present ();
+        }
+
+        private string appearance_label (string tok) {
+            switch (tok) {
+                case "light": return _("Light");
+                case "dark":  return _("Dark");
+                default:      return _("System");
+            }
+        }
+
+        private string appearance_token (string label) {
+            if (label == _("Light")) return "light";
+            if (label == _("Dark")) return "dark";
+            return "system";
         }
 
         private void apply_settings_to_all () {
