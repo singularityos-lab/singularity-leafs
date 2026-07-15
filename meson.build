@@ -58,7 +58,8 @@ executable('singularity-leafs',
   dependencies: [gtk_dep, gee_dep, vte_dep, json_dep, libsingularity_dep,
                  meson.get_compiler('c').find_library('m', required: true)],
   vala_args: ['--pkg=posix'] + develop_vala_args,
-  install: true
+  install: true,
+  install_rpath: get_option('prefix') / get_option('libdir')
 )
 
 desktop_conf = configuration_data()
