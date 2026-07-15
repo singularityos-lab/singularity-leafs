@@ -327,7 +327,10 @@ namespace Singularity.Apps {
             vte.set_font (font_desc);
             vte.set_scrollback_lines (s.get_int ("scrollback-lines"));
 
-            var theme = Singularity.Core.TerminalThemes.get_by_id (s.get_string ("color-scheme"));
+            string scheme = s.get_string ("color-scheme");
+            var theme = (scheme == "auto")
+                ? auto_theme (appearance_is_dark (s))
+                : Singularity.Core.TerminalThemes.get_by_id (scheme);
             if (theme == null)
                 theme = Singularity.Core.TerminalThemes.get_by_id ("onedark");
             if (theme != null) {
@@ -341,6 +344,96 @@ namespace Singularity.Apps {
                 }
                 vte.set_colors (fg, bg, palette);
             }
+        }
+
+        // Whether the "auto" terminal scheme should render dark. Follows the
+        // app's own appearance preference so a forced light/dark reaches the
+        // terminal even when running outside the Singularity shell (where the
+        // desktop-wide theme mode does not apply).
+        private bool appearance_is_dark (GLib.Settings s) {
+            switch (s.get_string ("appearance")) {
+                case "light": return false;
+                case "dark":  return true;
+                default:      return Singularity.Style.ThemeMode.get_default ().app_dark ();
+            }
+        }
+
+        // Accent-tinted "auto" terminal theme. Mirrors libsingularity's
+        // TerminalThemes.make_auto_theme (), but keyed off the app appearance
+        // rather than the desktop theme mode.
+        private static Singularity.Widgets.ColorTheme auto_theme (bool dark) {
+            string accent = accent_hex ();
+            if (dark) {
+                return new Singularity.Widgets.ColorTheme (
+                    "auto", "Auto (Accent Color)",
+                    tint_bg (accent), "#e8e8e8",
+                    {
+                        "#2a2a2a",        "#f38ba8", "#a6e3a1", "#f9e2af",
+                        accent,           "#cba6f7", "#89dceb", "#cccccc",
+                        "#555555",        "#ff7f9f", "#b8f0bb", "#ffe0a0",
+                        lighten (accent), "#d8b4ff", "#9aeaf7", "#ffffff"
+                    }
+                );
+            }
+            return new Singularity.Widgets.ColorTheme (
+                "auto", "Auto (Accent Color)",
+                tint_bg_light (accent), "#1a1a1a",
+                {
+                    "#f0f0f0",       "#c0392b", "#27ae60", "#d68910",
+                    accent,          "#8e44ad", "#16a085", "#555555",
+                    "#aaaaaa",       "#e74c3c", "#2ecc71", "#f1c40f",
+                    darken (accent), "#9b59b6", "#1abc9c", "#1a1a1a"
+                }
+            );
+        }
+
+        private static string accent_hex () {
+            string hex = Singularity.Style.StyleManager.get_default ().accent_hex;
+            return (hex != "") ? hex : "#3584e4";
+        }
+
+        private static string tint_bg (string hex) {
+            if (hex.length < 7) return "#0e0e0e";
+            int r = (int) hex.substring (1, 2).to_long (null, 16);
+            int g = (int) hex.substring (3, 2).to_long (null, 16);
+            int b = (int) hex.substring (5, 2).to_long (null, 16);
+            return "#%02x%02x%02x".printf (
+                ((int)(0x0d + r * 0.18)).clamp (0, 255),
+                ((int)(0x0d + g * 0.18)).clamp (0, 255),
+                ((int)(0x0d + b * 0.18)).clamp (0, 255));
+        }
+
+        private static string tint_bg_light (string hex) {
+            if (hex.length < 7) return "#f5f5f5";
+            int r = (int) hex.substring (1, 2).to_long (null, 16);
+            int g = (int) hex.substring (3, 2).to_long (null, 16);
+            int b = (int) hex.substring (5, 2).to_long (null, 16);
+            return "#%02x%02x%02x".printf (
+                ((int)(0xf5 - (255 - r) * 0.08)).clamp (0, 255),
+                ((int)(0xf5 - (255 - g) * 0.08)).clamp (0, 255),
+                ((int)(0xf5 - (255 - b) * 0.08)).clamp (0, 255));
+        }
+
+        private static string darken (string hex) {
+            if (hex.length < 7) return "#555555";
+            int r = (int) hex.substring (1, 2).to_long (null, 16);
+            int g = (int) hex.substring (3, 2).to_long (null, 16);
+            int b = (int) hex.substring (5, 2).to_long (null, 16);
+            return "#%02x%02x%02x".printf (
+                ((int)(r * 0.80)).clamp (0, 255),
+                ((int)(g * 0.80)).clamp (0, 255),
+                ((int)(b * 0.80)).clamp (0, 255));
+        }
+
+        private static string lighten (string hex) {
+            if (hex.length < 7) return "#aaaaaa";
+            int r = (int) hex.substring (1, 2).to_long (null, 16);
+            int g = (int) hex.substring (3, 2).to_long (null, 16);
+            int b = (int) hex.substring (5, 2).to_long (null, 16);
+            return "#%02x%02x%02x".printf (
+                (r + (int)((255 - r) * 0.40)).clamp (0, 255),
+                (g + (int)((255 - g) * 0.40)).clamp (0, 255),
+                (b + (int)((255 - b) * 0.40)).clamp (0, 255));
         }
 
         private void _spawn_bug () {

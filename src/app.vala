@@ -123,7 +123,10 @@ namespace Singularity.Apps {
             settings.changed["font-family"].connect  ((_k) => apply_settings_to_all ());
             settings.changed["color-scheme"].connect ((_k) => apply_settings_to_all ());
             settings.changed["scrollback-lines"].connect ((_k) => apply_settings_to_all ());
-            settings.changed["appearance"].connect ((_k) => set_app_appearance (settings.get_string ("appearance")));
+            settings.changed["appearance"].connect ((_k) => {
+                set_app_appearance (settings.get_string ("appearance"));
+                apply_settings_to_all ();
+            });
 
             // When "auto" theme is active, re-apply whenever system accent or dark-mode changes
             desktop_settings = Singularity.Core.safe_settings ("dev.sinty.desktop");
@@ -140,6 +143,8 @@ namespace Singularity.Apps {
             Singularity.Style.ThemeMode.get_default ().changed.connect (() => {
                 if (settings.get_string ("color-scheme") == "auto")
                     apply_settings_to_all ();
+                if (settings.get_string ("appearance") == "system")
+                    set_app_appearance ("system");
             });
             Singularity.Style.StyleManager.get_default ().notify["accent-hex"].connect (() => {
                 if (settings.get_string ("color-scheme") == "auto")
@@ -670,6 +675,19 @@ namespace Singularity.Apps {
             return "system";
         }
 
+        // Force the app's light/dark chrome when running outside the desktop.
+        // "system" follows the platform preference; "light"/"dark" override it.
+        private void set_app_appearance (string appearance) {
+            bool dark;
+            switch (appearance) {
+                case "light": dark = false; break;
+                case "dark":  dark = true;  break;
+                default:      dark = Singularity.Style.ThemeMode.get_default ().app_dark (); break;
+            }
+            Gtk.Settings.get_default ().gtk_application_prefer_dark_theme = dark;
+            Singularity.Style.StyleManager.get_default ().apply_color_scheme (dark);
+        }
+
         private void apply_settings_to_all () {
             foreach (var leaf in leaves)
                 leaf.apply_settings (settings);
@@ -886,9 +904,11 @@ namespace Singularity.Apps {
         private void setup_styles () {
             var provider = new Gtk.CssProvider ();
             provider.load_from_data (LEAFS_CSS.data);
+            // Above libsingularity's theme (PRIORITY_USER) so app-specific
+            // overrides actually win over the framework's styling.
             Gtk.StyleContext.add_provider_for_display (
                 Gdk.Display.get_default (), provider,
-                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+                Gtk.STYLE_PROVIDER_PRIORITY_USER + 2);
         }
 
         private const string LEAFS_CSS = """
@@ -915,6 +935,38 @@ namespace Singularity.Apps {
             /* Terminal App */
             .term-pane-focused {}
             .term-pane-unfocused {}
+            /* Pane hover controls stay dark in every appearance so their
+               white icons keep contrast over a light terminal too. */
+            .singularity-hover-btn,
+            button.singularity-hover-btn,
+            button.flat.singularity-hover-btn {
+                background-image: none;
+                background-color: rgba(38, 38, 38, 0.92);
+                border-color: alpha(white, 0.18);
+                color: white;
+            }
+            .singularity-hover-btn image,
+            button.singularity-hover-btn image,
+            button.flat.singularity-hover-btn image {
+                color: white;
+            }
+            .singularity-hover-btn:hover,
+            button.singularity-hover-btn:hover,
+            button.flat.singularity-hover-btn:hover {
+                background-image: none;
+                background-color: rgba(20, 20, 20, 0.96);
+                border-color: alpha(white, 0.28);
+            }
+            /* The Theme selector's revealed list must follow the app theme so
+               it doesn't sit on a dark surface while the window is light. */
+            .expander-content,
+            .expander-content scrolledwindow,
+            .expander-content scrolledwindow > viewport,
+            .expander-content listbox,
+            .expander-content list,
+            .expander-content list > row {
+                background-color: transparent;
+            }
             .ssh-sidebar {
                 border-right: 1px solid alpha(@text_color, 0.08);
                 min-width: 200px;
