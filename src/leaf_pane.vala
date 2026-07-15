@@ -329,7 +329,7 @@ namespace Singularity.Apps {
 
             string scheme = s.get_string ("color-scheme");
             var theme = (scheme == "auto")
-                ? Singularity.Core.TerminalThemes.make_auto_theme (appearance_is_dark (s))
+                ? Singularity.Core.TerminalThemes.make_auto_theme (auto_is_dark ())
                 : Singularity.Core.TerminalThemes.get_by_id (scheme);
             if (theme == null)
                 theme = Singularity.Core.TerminalThemes.get_by_id ("onedark");
@@ -346,12 +346,8 @@ namespace Singularity.Apps {
             }
         }
 
-        private bool appearance_is_dark (GLib.Settings s) {
-            switch (s.get_string ("appearance")) {
-                case "light": return false;
-                case "dark":  return true;
-                default:      return Singularity.Style.ThemeMode.get_default ().app_dark ();
-            }
+        private bool auto_is_dark () {
+            return Singularity.Style.ThemeMode.get_default ().app_dark ();
         }
 
         private void _spawn_bug () {

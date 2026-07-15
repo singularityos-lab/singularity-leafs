@@ -121,12 +121,8 @@ namespace Singularity.Apps {
             // React to font/theme changes live
             settings.changed["font-size"].connect    ((_k) => apply_settings_to_all ());
             settings.changed["font-family"].connect  ((_k) => apply_settings_to_all ());
-            settings.changed["color-scheme"].connect ((_k) => apply_settings_to_all ());
+            settings.changed["color-scheme"].connect ((_k) => sync_terminal_theme ());
             settings.changed["scrollback-lines"].connect ((_k) => apply_settings_to_all ());
-            settings.changed["appearance"].connect ((_k) => {
-                set_app_appearance (settings.get_string ("appearance"));
-                apply_settings_to_all ();
-            });
 
             // When "auto" theme is active, re-apply whenever system accent or dark-mode changes
             desktop_settings = Singularity.Core.safe_settings ("dev.sinty.desktop");
@@ -141,17 +137,16 @@ namespace Singularity.Apps {
                 });
             }
             Singularity.Style.ThemeMode.get_default ().changed.connect (() => {
+                sync_window_chrome ();
                 if (settings.get_string ("color-scheme") == "auto")
                     apply_settings_to_all ();
-                if (settings.get_string ("appearance") == "system")
-                    set_app_appearance ("system");
             });
             Singularity.Style.StyleManager.get_default ().notify["accent-hex"].connect (() => {
                 if (settings.get_string ("color-scheme") == "auto")
                     apply_settings_to_all ();
             });
 
-            set_app_appearance (settings.get_string ("appearance"));
+            sync_window_chrome ();
         }
 
         protected override void activate () {
@@ -643,15 +638,25 @@ namespace Singularity.Apps {
             if (prefs_win != null) { prefs_win.present (); return; }
 
             var page = new Singularity.Widgets.PreferencesPage ();
-            var group = new Singularity.Widgets.PreferencesGroup (_("Appearance"));
+            var group = new Singularity.Widgets.PreferencesGroup (_("Terminal"));
 
-            var theme_row = new Singularity.Widgets.SelectionRow (_("Theme"),
-                { _("System"), _("Light"), _("Dark") },
-                appearance_label (settings.get_string ("appearance")));
+            var themes = Singularity.Core.TerminalThemes.get_all ();
+            string[] names = {};
+            foreach (var t in themes) names += t.name;
+            string current = settings.get_string ("color-scheme");
+            string current_name = "";
+            foreach (var t in themes)
+                if (t.id == current) current_name = t.name;
+
+            var theme_row = new Singularity.Widgets.SelectionRow (_("Theme"), names, current_name);
             theme_row.selected.connect ((item) => {
-                string tok = appearance_token (item);
-                if (settings.get_string ("appearance") != tok)
-                    settings.set_string ("appearance", tok);
+                foreach (var t in themes) {
+                    if (t.name == item) {
+                        if (settings.get_string ("color-scheme") != t.id)
+                            settings.set_string ("color-scheme", t.id);
+                        break;
+                    }
+                }
             });
             group.add_row (theme_row);
             page.append_group (group);
@@ -661,21 +666,32 @@ namespace Singularity.Apps {
             prefs_win.present ();
         }
 
-        private string appearance_label (string tok) {
-            switch (tok) {
-                case "light": return _("Light");
-                case "dark":  return _("Dark");
-                default:      return _("System");
-            }
+
+        private bool terminal_is_dark () {
+            string scheme = settings.get_string ("color-scheme");
+            if (scheme == "auto")
+                return Singularity.Style.ThemeMode.get_default ().app_dark ();
+            var theme = Singularity.Core.TerminalThemes.get_by_id (scheme);
+            if (theme == null)
+                theme = Singularity.Core.TerminalThemes.get_by_id ("onedark");
+            return theme != null
+                && Singularity.Core.TerminalThemes.is_dark_background (theme.background);
         }
 
-        private string appearance_token (string label) {
-            if (label == _("Light")) return "light";
-            if (label == _("Dark")) return "dark";
-            return "system";
+        private void sync_window_chrome () {
+            bool dark = terminal_is_dark ();
+            Gtk.Settings.get_default ().gtk_application_prefer_dark_theme = dark;
+            Singularity.Style.StyleManager.get_default ().apply_color_scheme (dark);
+        }
+
+        private void sync_terminal_theme () {
+            sync_window_chrome ();
+            apply_settings_to_all ();
         }
 
         private void apply_settings_to_all () {
+            if (leaves == null)
+                return;
             foreach (var leaf in leaves)
                 leaf.apply_settings (settings);
         }
