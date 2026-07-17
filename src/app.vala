@@ -121,7 +121,10 @@ namespace Singularity.Apps {
             // React to font/theme changes live
             settings.changed["font-size"].connect    ((_k) => apply_settings_to_all ());
             settings.changed["font-family"].connect  ((_k) => apply_settings_to_all ());
-            settings.changed["color-scheme"].connect ((_k) => sync_terminal_theme ());
+            settings.changed["color-scheme"].connect ((_k) => {
+                sync_window_chrome ();
+                apply_settings_to_all ();
+            });
             settings.changed["scrollback-lines"].connect ((_k) => apply_settings_to_all ());
 
             // When "auto" theme is active, re-apply whenever system accent or dark-mode changes
@@ -433,6 +436,7 @@ namespace Singularity.Apps {
             var popover = new Gtk.Popover ();
             popover.set_parent (anchor);
             popover.has_arrow = true;
+            popover.add_css_class ("context-menu");
 
             var root_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
             root_box.set_size_request (290, -1);
@@ -667,31 +671,18 @@ namespace Singularity.Apps {
         }
 
 
-        private bool terminal_is_dark () {
-            string scheme = settings.get_string ("color-scheme");
-            if (scheme == "auto")
-                return Singularity.Style.ThemeMode.get_default ().app_dark ();
-            var theme = Singularity.Core.TerminalThemes.get_by_id (scheme);
-            if (theme == null)
-                theme = Singularity.Core.TerminalThemes.get_by_id ("onedark");
-            return theme != null
-                && Singularity.Core.TerminalThemes.is_dark_background (theme.background);
-        }
-
         private void sync_window_chrome () {
-            bool dark = terminal_is_dark ();
+            string scheme = settings.get_string ("color-scheme");
+            bool dark = scheme == "auto"
+                ? Singularity.Style.ThemeMode.get_default ().app_dark ()
+                : Singularity.Core.TerminalThemes.is_dark_background (
+                    (Singularity.Core.TerminalThemes.get_by_id (scheme)
+                     ?? Singularity.Core.TerminalThemes.get_by_id ("onedark")).background);
             Gtk.Settings.get_default ().gtk_application_prefer_dark_theme = dark;
             Singularity.Style.StyleManager.get_default ().apply_color_scheme (dark);
         }
 
-        private void sync_terminal_theme () {
-            sync_window_chrome ();
-            apply_settings_to_all ();
-        }
-
         private void apply_settings_to_all () {
-            if (leaves == null)
-                return;
             foreach (var leaf in leaves)
                 leaf.apply_settings (settings);
         }
@@ -789,6 +780,7 @@ namespace Singularity.Apps {
             var popover = new Gtk.Popover ();
             popover.set_parent (anchor);
             popover.has_arrow = true;
+            popover.add_css_class ("context-menu");
 
             var root_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
             root_box.set_size_request (290, -1);
@@ -909,7 +901,7 @@ namespace Singularity.Apps {
             provider.load_from_data (LEAFS_CSS.data);
             Gtk.StyleContext.add_provider_for_display (
                 Gdk.Display.get_default (), provider,
-                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+                Gtk.STYLE_PROVIDER_PRIORITY_USER + 1);
         }
 
         private const string LEAFS_CSS = """
@@ -1030,7 +1022,15 @@ namespace Singularity.Apps {
             .bloom-terminal {
                 padding: 30px 12px 8px 12px;
             }
-        """;
+            /* Hover buttons force a white icon/label color (library CSS); stop
+               it from inheriting into popovers anchored on them (GTK4 popovers
+               are style-tree children of their anchor). */
+            .leafs-window popover.context-menu,
+            .leafs-window popover.context-menu > contents,
+            .leafs-window popover.context-menu * {
+                color: @text_color;
+            }
+         """;
     }
 
 }
