@@ -25,6 +25,7 @@ namespace Singularity.Apps {
         private Singularity.Widgets.ChipBar            _chip_bar;
         private Gtk.Box                                _bug_host;
         private Gee.HashMap<string, Vte.Terminal>      _bugs;
+        private Gee.HashMap<string, ulong>             _bug_title_handlers;
         private string?                                _active_bug   = null;
         private int                                    _bug_counter  = 0;
 
@@ -42,72 +43,72 @@ namespace Singularity.Apps {
         public signal void close_all_requested ();
         public signal void reorder_requested    (LeafPane source, LeafPane target);
         public signal void lookup_reorder       (string source_id, LeafPane target);
+        public signal void bug_detach_requested (LeafPane pane, string bug_id);
 
-        public LeafPane (GLib.Settings settings, string? cwd = null, string? id = null, string[]? spawn_cmd = null) {
+        public LeafPane (GLib.Settings settings, string? cwd = null, string? id = null,
+                         string[]? spawn_cmd = null, Vte.Terminal? adopted_terminal = null) {
             Object (orientation: Orientation.VERTICAL, spacing: 0);
             hexpand = true;
             vexpand = true;
             pane_id   = id ?? GLib.Uuid.string_random ();
             _settings = settings;
             _bugs     = new Gee.HashMap<string, Vte.Terminal> ();
+            _bug_title_handlers = new Gee.HashMap<string, ulong> ();
 
-            terminal = new Vte.Terminal ();
+            terminal = adopted_terminal ?? new Vte.Terminal ();
             terminal.hexpand = true;
             terminal.vexpand = true;
             _apply_settings (settings);
 
-            // History file per pane
-            string hist_dir = GLib.Path.build_filename (
-                GLib.Environment.get_home_dir (),
-                ".local", "share", "singularity", "leafs");
-            try { GLib.DirUtils.create_with_parents (hist_dir, 0755); } catch {}
-            string hist_path = GLib.Path.build_filename (hist_dir, "history-%s.hist".printf (pane_id));
+            if (adopted_terminal == null) {
+                string hist_dir = GLib.Path.build_filename (
+                    GLib.Environment.get_home_dir (),
+                    ".local", "share", "singularity", "leafs");
+                try { GLib.DirUtils.create_with_parents (hist_dir, 0755); } catch {}
+                string hist_path = GLib.Path.build_filename (hist_dir, "history-%s.hist".printf (pane_id));
 
-            // Seed pane history from user's shell history if not already created
-            if (!FileUtils.test (hist_path, FileTest.EXISTS)) {
-                string home = GLib.Environment.get_home_dir ();
-                string[] candidates = {
-                    GLib.Environment.get_variable ("HISTFILE") ?? "",
-                    GLib.Path.build_filename (home, ".zsh_history"),
-                    GLib.Path.build_filename (home, ".bash_history"),
-                    GLib.Path.build_filename (home, ".history")
-                };
-                foreach (var candidate in candidates) {
-                    if (candidate != "" && FileUtils.test (candidate, FileTest.EXISTS)) {
-                        try {
-                            string content;
-                            FileUtils.get_contents (candidate, out content);
-                            FileUtils.set_contents (hist_path, content);
-                        } catch {}
-                        break;
+                if (!FileUtils.test (hist_path, FileTest.EXISTS)) {
+                    string home = GLib.Environment.get_home_dir ();
+                    string[] candidates = {
+                        GLib.Environment.get_variable ("HISTFILE") ?? "",
+                        GLib.Path.build_filename (home, ".zsh_history"),
+                        GLib.Path.build_filename (home, ".bash_history"),
+                        GLib.Path.build_filename (home, ".history")
+                    };
+                    foreach (var candidate in candidates) {
+                        if (candidate != "" && FileUtils.test (candidate, FileTest.EXISTS)) {
+                            try {
+                                string content;
+                                FileUtils.get_contents (candidate, out content);
+                                FileUtils.set_contents (hist_path, content);
+                            } catch {}
+                            break;
+                        }
                     }
                 }
+
+                string shell = resolve_login_shell ();
+                string[] envv = {
+                    "HISTFILE=" + hist_path,
+                    "HISTSIZE=10000",
+                    "HISTFILESIZE=10000",
+                    "PROMPT_COMMAND=history -a"
+                };
+                string[] argv = spawn_cmd ?? new string[] { shell };
+
+                terminal.spawn_async (
+                    Vte.PtyFlags.DEFAULT,
+                    cwd ?? GLib.Environment.get_home_dir (),
+                    argv,
+                    envv,
+                    GLib.SpawnFlags.DO_NOT_REAP_CHILD,
+                    null, -1, null,
+                    (t, pid, err) => {
+                        if (err != null) warning ("LeafPane spawn: %s", err.message);
+                        else shell_pid = (int) pid;
+                    }
+                );
             }
-
-            string shell = resolve_login_shell ();
-            // PROMPT_COMMAND flushes bash history after every command;
-            // zsh/fish ignore it harmlessly. This keeps .hist files up to date
-            // even if the app is killed instead of closed cleanly.
-            string[] envv = {
-                "HISTFILE=" + hist_path,
-                "HISTSIZE=10000",
-                "HISTFILESIZE=10000",
-                "PROMPT_COMMAND=history -a"
-            };
-            string[] argv = spawn_cmd ?? new string[] { shell };
-
-            terminal.spawn_async (
-                Vte.PtyFlags.DEFAULT,
-                cwd ?? GLib.Environment.get_home_dir (),
-                argv,
-                envv,
-                GLib.SpawnFlags.DO_NOT_REAP_CHILD,
-                null, -1, null,
-                (t, pid, err) => {
-                    if (err != null) warning ("LeafPane spawn: %s", err.message);
-                    else shell_pid = (int) pid;
-                }
-            );
 
             // When the shell exits (e.g. the `exit` command), close this pane
             // instead of leaving a dead terminal hanging.
@@ -230,25 +231,13 @@ namespace Singularity.Apps {
             _chip_bar.visible = false;
             // Session chips can be reordered by dragging them.
             _chip_bar.reorderable = true;
+            _chip_bar.detachable = true;
             _chip_bar.chip_activated.connect (_on_chip_activated);
             _chip_bar.chip_closed.connect    (_on_chip_closed);
+            _chip_bar.chip_detached.connect ((id) => bug_detach_requested (this, id));
             append (_chip_bar);
 
-            // Right-click context menu
-            var rclick = new GestureClick ();
-            rclick.button = 3;
-            rclick.pressed.connect ((n, x, y) => {
-                var menu = new Singularity.Widgets.ContextMenu (terminal);
-                Gdk.Rectangle rect = { (int) x, (int) y, 1, 1 };
-                menu.set_pointing_to (rect);
-                if (terminal.get_has_selection ())
-                    menu.add_item ("Copy", "edit-copy-symbolic", () => terminal.copy_clipboard_format (Vte.Format.TEXT));
-                menu.add_item ("Paste", "edit-paste-symbolic", () => smart_paste (terminal));
-                menu.add_separator ();
-                menu.add_item ("Clear", "edit-clear-symbolic", () => terminal.reset (true, true));
-                menu.popup ();
-            });
-            terminal.add_controller (rclick);
+            _install_context_menu (terminal);
         }
 
         public void apply_settings (GLib.Settings settings) {
@@ -378,7 +367,7 @@ namespace Singularity.Apps {
 
             // Track VTE title, chip label (truncate to 10 chars)
             string tracked_id = bug_id;
-            vte.window_title_changed.connect (() => {
+            ulong title_handler = vte.window_title_changed.connect (() => {
                 string? t = vte.get_window_title ();
                 if (t == null || t.length == 0) return;
                 string display = t.char_count () > 10
@@ -386,11 +375,19 @@ namespace Singularity.Apps {
                     : t;
                 _chip_bar.update_chip_label (tracked_id, display);
             });
+            _bug_title_handlers.set (bug_id, title_handler);
 
-            // Right-click context menu for bug terminal (same as leaf)
-            var bug_rclick = new GestureClick ();
-            bug_rclick.button = 3;
-            bug_rclick.pressed.connect ((n, x, y) => {
+            _install_context_menu (vte);
+
+            _activate_bug (bug_id);
+        }
+
+        private void _install_context_menu (Vte.Terminal vte) {
+            if (vte.get_data<bool> ("leafs-context-menu-installed")) return;
+            vte.set_data<bool> ("leafs-context-menu-installed", true);
+            var click = new GestureClick ();
+            click.button = 3;
+            click.pressed.connect ((n, x, y) => {
                 var menu = new Singularity.Widgets.ContextMenu (vte);
                 Gdk.Rectangle rect = { (int) x, (int) y, 1, 1 };
                 menu.set_pointing_to (rect);
@@ -401,9 +398,7 @@ namespace Singularity.Apps {
                 menu.add_item ("Clear", "edit-clear-symbolic", () => vte.reset (true, true));
                 menu.popup ();
             });
-            vte.add_controller (bug_rclick);
-
-            _activate_bug (bug_id);
+            vte.add_controller (click);
         }
 
         private void _activate_bug (string id) {
@@ -467,18 +462,41 @@ namespace Singularity.Apps {
         }
 
         private void _on_chip_closed (string id) {
+            var vte = _bugs.get (id);
             if (_active_bug == id) {
-                var vte = _bugs.get (id);
                 if (vte != null) _bug_host.remove (vte);
                 _active_bug = null;
                 if (_split.get_end_child () == _bug_host)
                     _split.set_end_child (null);
             }
+            ulong title_handler = _bug_title_handlers.get (id);
+            if (title_handler != 0 && vte != null) vte.disconnect (title_handler);
+            _bug_title_handlers.unset (id);
             _bugs.unset (id);
             _chip_bar.remove_chip (id);
             if (_chip_bar.chip_count == 0) _chip_bar.visible = false;
             _chip_bar.set_active (null);
             terminal.grab_focus ();
+        }
+
+        internal Vte.Terminal? take_bug (string id) {
+            var vte = _bugs.get (id);
+            if (vte == null) return null;
+            if (_active_bug == id) {
+                _bug_host.remove (vte);
+                _active_bug = null;
+                if (_split.get_end_child () == _bug_host)
+                    _split.set_end_child (null);
+            }
+            ulong title_handler = _bug_title_handlers.get (id);
+            if (title_handler != 0) vte.disconnect (title_handler);
+            _bug_title_handlers.unset (id);
+            _bugs.unset (id);
+            _chip_bar.remove_chip (id);
+            _chip_bar.visible = _chip_bar.chip_count > 0;
+            _chip_bar.set_active (null);
+            terminal.grab_focus ();
+            return vte;
         }
 
         public string get_working_dir () {

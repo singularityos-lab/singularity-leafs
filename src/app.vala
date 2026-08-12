@@ -271,6 +271,7 @@ namespace Singularity.Apps {
             });
             leaf.reorder_requested.connect (on_reorder_leaf);
             leaf.lookup_reorder.connect (on_lookup_reorder);
+            leaf.bug_detach_requested.connect (detach_bug_to_flower);
         }
 
         private void close_all_windows () {
@@ -327,6 +328,27 @@ namespace Singularity.Apps {
             rebuild_separators_in (win);
             win.present ();
             leaf.terminal.grab_focus ();
+        }
+
+        private void detach_bug_to_flower (LeafPane source, string bug_id) {
+            var terminal = source.take_bug (bug_id);
+            if (terminal == null) return;
+
+            var win = new LeafsWindow (this);
+            win.close_request.connect (() => {
+                save_session ();
+                return false;
+            });
+            flowers.add (win);
+
+            var leaf = new LeafPane (settings, null, null, null, terminal);
+            connect_leaf_signals (leaf);
+            leaf_window[leaf] = win;
+            leaves.add (leaf);
+            rebuild_separators_in (win);
+
+            win.present ();
+            terminal.grab_focus ();
         }
 
         private void on_reorder_leaf (LeafPane source, LeafPane target) {
