@@ -161,6 +161,7 @@ namespace Singularity.Apps {
             hover_controls.add_control (grip_btn);
 
             var add_btn = new Button.from_icon_name ("list-add-symbolic");
+            add_btn.add_css_class ("flat");
             add_btn.tooltip_text = _("New leaf / bug");
             add_btn.clicked.connect (() => {
                 _add_menu = new Singularity.Widgets.ContextMenu (add_btn);
@@ -178,19 +179,23 @@ namespace Singularity.Apps {
             hover_controls.add_control (add_btn);
 
             ssh_btn = new Button.from_icon_name ("network-server-symbolic");
+            ssh_btn.add_css_class ("flat");
             ssh_btn.tooltip_text = _("SSH Sessions");
             hover_controls.add_control (ssh_btn);
 
             bloom_btn = new Button.from_icon_name ("window-restore-symbolic");
+            bloom_btn.add_css_class ("flat");
             bloom_btn.tooltip_text = _("Blooms");
             hover_controls.add_control (bloom_btn);
 
             var settings_btn = new Button.from_icon_name ("emblem-system-symbolic");
+            settings_btn.add_css_class ("flat");
             settings_btn.tooltip_text = _("Settings");
             settings_btn.clicked.connect (() => settings_requested ());
             hover_controls.add_control (settings_btn);
 
             var close_btn = new Button.from_icon_name ("window-close-symbolic");
+            close_btn.add_css_class ("flat");
             close_btn.tooltip_text = _("Close");
             close_btn.clicked.connect (() => {
                 _close_menu = new Singularity.Widgets.ContextMenu (close_btn);
@@ -318,7 +323,8 @@ namespace Singularity.Apps {
 
             string scheme = s.get_string ("color-scheme");
             var theme = (scheme == "auto")
-                ? Singularity.Core.TerminalThemes.make_auto_theme (auto_is_dark ())
+                ? Singularity.Core.TerminalThemes.make_auto_theme (
+                    Singularity.Style.ThemeMode.get_default ().app_dark ())
                 : Singularity.Core.TerminalThemes.get_by_id (scheme);
             if (theme == null)
                 theme = Singularity.Core.TerminalThemes.get_by_id ("onedark");
@@ -333,10 +339,6 @@ namespace Singularity.Apps {
                 }
                 vte.set_colors (fg, bg, palette);
             }
-        }
-
-        private bool auto_is_dark () {
-            return Singularity.Style.ThemeMode.get_default ().app_dark ();
         }
 
         private void _spawn_bug () {

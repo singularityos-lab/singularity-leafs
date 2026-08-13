@@ -15,6 +15,7 @@ namespace Singularity.Apps {
 
         public LeafsWindow (Gtk.Application app) {
             Object (application: app);
+            add_css_class ("leafs-window");
 #if DEVEL
             set_title (_("Leafs (Devel)"));
 #else
