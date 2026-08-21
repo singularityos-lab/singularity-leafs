@@ -7,20 +7,51 @@ using Gee;
 
 namespace Singularity.Apps {
 
+    private class LeafLayoutNode : Object {
+        public LeafCell? cell;
+        public Orientation orientation;
+        public LeafLayoutNode? start;
+        public LeafLayoutNode? end;
+
+        public LeafLayoutNode.for_cell (LeafCell cell) {
+            this.cell = cell;
+        }
+
+        public LeafLayoutNode.for_split (Orientation orientation,
+                                         LeafLayoutNode start,
+                                         LeafLayoutNode end) {
+            this.orientation = orientation;
+            this.start = start;
+            this.end = end;
+        }
+
+        public int leaf_count () {
+            if (cell != null) return 1;
+            int start_count = start != null ? start.leaf_count () : 0;
+            int end_count = end != null ? end.leaf_count () : 0;
+            return start_count + end_count;
+        }
+    }
+
     public class LeafsApp : Singularity.Application {
         // Primary window; "flowers" are additional LeafsWindow instances.
         private LeafsWindow main_window;
-        // All leaves across all windows, flat. Order within each window is
-        // derived from the LeafsWindow's leaves_box children.
         private ArrayList<LeafPane> leaves;
         // Maps each leaf to the LeafsWindow currently hosting it.
         private HashMap<LeafPane, LeafsWindow> leaf_window = new HashMap<LeafPane, LeafsWindow>();
+        private HashMap<LeafPane, LeafCell> leaf_cell = new HashMap<LeafPane, LeafCell>();
+        private HashMap<LeafsWindow, ArrayList<LeafCell>> window_cells =
+            new HashMap<LeafsWindow, ArrayList<LeafCell>> ();
+        private HashMap<LeafsWindow, LeafLayoutNode> window_layout =
+            new HashMap<LeafsWindow, LeafLayoutNode> ();
         // Extra "flower" windows beyond main_window.
         private ArrayList<LeafsWindow> flowers = new ArrayList<LeafsWindow>();
         private GLib.Settings settings;
         private GLib.Settings? desktop_settings;
         private ArrayList<SshSession> ssh_sessions;
         private ArrayList<BloomDef> blooms;
+        private uint session_save_source = 0;
+        private bool restoring_session = false;
 
         private LeafsWindow window_of(LeafPane leaf) {
             return leaf_window.has_key(leaf) ? leaf_window[leaf] : main_window;
@@ -93,6 +124,14 @@ namespace Singularity.Apps {
             act_settings.activate.connect (() => show_settings ());
             add_action (act_settings);
 
+            var act_new_leaf = new SimpleAction ("new-leaf", null);
+            act_new_leaf.activate.connect (() => add_leaf_after_focused ());
+            add_action (act_new_leaf);
+
+            var act_new_tab = new SimpleAction ("new-tab", null);
+            act_new_tab.activate.connect (() => add_tab_after_focused ());
+            add_action (act_new_tab);
+
             var act_quit = new SimpleAction ("quit", null);
             act_quit.activate.connect (() => quit ());
             add_action (act_quit);
@@ -158,10 +197,10 @@ namespace Singularity.Apps {
                 }
                 return;
             }
-            build_window ();
             leaves       = new ArrayList<LeafPane> ();
             ssh_sessions = new ArrayList<SshSession> ();
             blooms       = new ArrayList<BloomDef> ();
+            build_window ();
             load_ssh_sessions ();
             load_blooms ();
             if (_startup_cmd != null) {
@@ -176,9 +215,23 @@ namespace Singularity.Apps {
             main_window.present ();
         }
 
+        protected override void shutdown () {
+            if (session_save_source != 0) {
+                GLib.Source.remove (session_save_source);
+                session_save_source = 0;
+            }
+            save_session ();
+            if (leaves != null) {
+                foreach (var leaf in leaves)
+                    leaf.prepare_close ();
+            }
+            base.shutdown ();
+        }
+
 
         private void build_window () {
             main_window = new LeafsWindow (this);
+            window_cells[main_window] = new ArrayList<LeafCell> ();
 
             // Keyboard shortcuts
             var key_ctrl = new Gtk.EventControllerKey ();
@@ -200,6 +253,9 @@ namespace Singularity.Apps {
                 switch (Gdk.keyval_to_lower (keyval)) {
                     case Gdk.Key.n:
                         add_leaf_after_focused ();
+                        return true;
+                    case Gdk.Key.t:
+                        add_tab_after_focused ();
                         return true;
                     case Gdk.Key.c:
                         var t = get_focused_terminal ();
@@ -233,33 +289,72 @@ namespace Singularity.Apps {
         private void insert_leaf_after (LeafPane? after, string? cwd, string? id, string[]? spawn_cmd = null) {
             var leaf = new LeafPane (settings, cwd, id, spawn_cmd);
             connect_leaf_signals (leaf);
-
-            // Determine target window: the one currently hosting `after`,
-            // or the main window if `after` is null / unknown.
             LeafsWindow target = (after != null && leaf_window.has_key(after))
                 ? leaf_window[after]
                 : main_window;
-
             leaf_window[leaf] = target;
 
-            if (after == null) {
-                leaves.add (leaf);
-            } else {
-                int idx = leaves.index_of (after);
-                if (idx < 0 || idx >= leaves.size - 1) {
-                    leaves.add (leaf);
-                } else {
-                    leaves.insert (idx + 1, leaf);
-                }
+            insert_leaf_in_list (leaf, after);
+            var cell = create_cell (leaf);
+            leaf_cell[leaf] = cell;
+
+            var cells = window_cells[target];
+            int cell_index = after != null && leaf_cell.has_key (after)
+                ? cells.index_of (leaf_cell[after])
+                : cells.size - 1;
+            if (cell_index < 0 || cell_index >= cells.size - 1)
+                cells.add (cell);
+            else
+                cells.insert (cell_index + 1, cell);
+
+            window_layout.unset (target);
+            rebuild_separators_in (target);
+            queue_save_session ();
+            leaf.terminal.grab_focus ();
+        }
+
+        private void insert_tab_after (LeafPane? after, string? cwd, string? id,
+                                       string[]? spawn_cmd = null) {
+            if (after == null || !leaf_cell.has_key (after)) {
+                insert_leaf_after (after, cwd, id, spawn_cmd);
+                return;
             }
 
-            rebuild_separators_in (target);
+            var leaf = new LeafPane (settings, cwd, id, spawn_cmd);
+            connect_leaf_signals (leaf);
+            var target = window_of (after);
+            var cell = leaf_cell[after];
+            leaf_window[leaf] = target;
+            leaf_cell[leaf] = cell;
+            insert_leaf_in_list (leaf, after);
+            cell.add_leaf (leaf);
+            queue_save_session ();
             leaf.terminal.grab_focus ();
+        }
+
+        private void insert_leaf_in_list (LeafPane leaf, LeafPane? after) {
+            if (after == null) {
+                leaves.add (leaf);
+                return;
+            }
+            int index = leaves.index_of (after);
+            if (index < 0 || index >= leaves.size - 1)
+                leaves.add (leaf);
+            else
+                leaves.insert (index + 1, leaf);
+        }
+
+        private LeafCell create_cell (LeafPane leaf) {
+            var cell = new LeafCell ();
+            cell.close_requested.connect (on_close_leaf);
+            cell.add_leaf (leaf);
+            return cell;
         }
 
         private void connect_leaf_signals (LeafPane leaf) {
             leaf.close_requested.connect (on_close_leaf);
             leaf.add_requested.connect   ((pane) => insert_leaf_after (pane, null, null));
+            leaf.tab_requested.connect   ((pane) => insert_tab_after (pane, null, null));
             leaf.flower_requested.connect (() => open_flower (null));
             leaf.detach_requested.connect (detach_leaf_to_flower);
             leaf.settings_requested.connect (show_settings);
@@ -269,9 +364,8 @@ namespace Singularity.Apps {
                 save_session ();
                 close_all_windows ();
             });
-            leaf.reorder_requested.connect (on_reorder_leaf);
-            leaf.lookup_reorder.connect (on_lookup_reorder);
-            leaf.bug_detach_requested.connect (detach_bug_to_flower);
+            leaf.tile_drop_requested.connect (on_tile_drop);
+            leaf.state_changed.connect (queue_save_session);
         }
 
         private void close_all_windows () {
@@ -286,24 +380,31 @@ namespace Singularity.Apps {
          * Create a new "flower" window with a fresh leaf inside it.
          */
         private void open_flower (string? cwd) {
-            var win = new LeafsWindow (this);
-            // Same close-on-quit-saves behaviour as the main window.
-            win.close_request.connect (() => {
-                save_session ();
-                return false;
-            });
-            // When the last leaf in this flower is closed, the flower closes
-            // (handled inside on_close_leaf via window_of/leaves_in_window).
-            flowers.add (win);
+            var win = create_flower_window ();
 
             var leaf = new LeafPane (settings, cwd, null, null);
             connect_leaf_signals (leaf);
             leaf_window[leaf] = win;
+            var cell = create_cell (leaf);
+            leaf_cell[leaf] = cell;
+            window_cells[win].add (cell);
             leaves.add (leaf);
             rebuild_separators_in (win);
+            queue_save_session ();
 
             win.present ();
             leaf.terminal.grab_focus ();
+        }
+
+        private LeafsWindow create_flower_window () {
+            var win = new LeafsWindow (this);
+            win.close_request.connect (() => {
+                save_session ();
+                return false;
+            });
+            flowers.add (win);
+            window_cells[win] = new ArrayList<LeafCell> ();
+            return win;
         }
 
         /**
@@ -316,71 +417,97 @@ namespace Singularity.Apps {
             foreach (var l in leaves) if (leaf_window[l] == src) siblings++;
             if (siblings <= 1) return;
 
-            // Create a new flower and move the leaf into it.
-            var win = new LeafsWindow (this);
-            win.close_request.connect (() => {
-                save_session ();
-                return false;
-            });
-            flowers.add (win);
+            var source_cell = leaf_cell[leaf];
+            source_cell.remove_leaf (leaf);
+            if (source_cell.leaves.is_empty) {
+                remove_layout_cell (src, source_cell);
+                window_cells[src].remove (source_cell);
+            }
+
+            var win = create_flower_window ();
+            var target_cell = create_cell (leaf);
             leaf_window[leaf] = win;
+            leaf_cell[leaf] = target_cell;
+            window_cells[win].add (target_cell);
             rebuild_separators_in (src);
             rebuild_separators_in (win);
+            queue_save_session ();
             win.present ();
             leaf.terminal.grab_focus ();
         }
 
-        private void detach_bug_to_flower (LeafPane source, string bug_id) {
-            var terminal = source.take_bug (bug_id);
-            if (terminal == null) return;
-
-            var win = new LeafsWindow (this);
-            win.close_request.connect (() => {
-                save_session ();
-                return false;
-            });
-            flowers.add (win);
-
-            var leaf = new LeafPane (settings, null, null, null, terminal);
-            connect_leaf_signals (leaf);
-            leaf_window[leaf] = win;
-            leaves.add (leaf);
-            rebuild_separators_in (win);
-
-            win.present ();
-            terminal.grab_focus ();
-        }
-
-        private void on_reorder_leaf (LeafPane source, LeafPane target) {
-            if (source == target) return;
-            int src_idx = leaves.index_of (source);
-            int dst_idx = leaves.index_of (target);
-            if (src_idx < 0 || dst_idx < 0) return;
+        private void on_tile_drop (string source_id, LeafPane target,
+                                   LeafDropZone zone) {
+            var source = leaf_by_id (source_id);
+            if (source == null || source == target) return;
 
             var src_win = window_of (source);
             var dst_win = window_of (target);
+            if (src_win != dst_win && leaves_in_window (src_win) <= 1) return;
+
+            var src_cell = leaf_cell[source];
+            var dst_cell = leaf_cell[target];
+            if (src_cell == dst_cell && zone == LeafDropZone.CENTER) {
+                src_cell.tabs.notebook.set_current_page (
+                    src_cell.tabs.notebook.page_num (source));
+                source.terminal.grab_focus ();
+                return;
+            }
+
+            ensure_window_layout (src_win);
+            if (src_win != dst_win)
+                ensure_window_layout (dst_win);
+
+            src_cell.remove_leaf (source);
+            if (src_cell.leaves.is_empty) {
+                window_cells[src_win].remove (src_cell);
+                remove_layout_cell (src_win, src_cell);
+            }
 
             leaves.remove (source);
-            if (dst_idx > src_idx) dst_idx--;
-            leaves.insert (dst_idx, source);
+            int target_index = leaves.index_of (target);
+            bool before = zone == LeafDropZone.LEFT || zone == LeafDropZone.TOP;
+            int leaf_index = target_index < 0
+                ? leaves.size
+                : target_index + (before ? 0 : 1);
+            leaves.insert (leaf_index.clamp (0, leaves.size), source);
 
-            if (src_win != dst_win) {
-                leaf_window[source] = dst_win;
-                rebuild_separators_in (src_win);
+            if (zone == LeafDropZone.CENTER) {
+                dst_cell.add_leaf (source);
+                leaf_cell[source] = dst_cell;
+            } else {
+                var moved_cell = create_cell (source);
+                int cell_index = window_cells[dst_win].index_of (dst_cell);
+                if (!before) cell_index++;
+                window_cells[dst_win].insert (
+                    cell_index.clamp (0, window_cells[dst_win].size), moved_cell);
+                insert_layout_cell (dst_win, dst_cell, moved_cell, zone);
+                leaf_cell[source] = moved_cell;
             }
-            rebuild_separators_in (dst_win);
+            leaf_window[source] = dst_win;
+
+            rebuild_separators_in (src_win);
+            if (src_win != dst_win)
+                rebuild_separators_in (dst_win);
+            queue_save_session ();
+            source.terminal.grab_focus ();
         }
 
-        private void on_lookup_reorder (string source_id, LeafPane target) {
-            foreach (var leaf in leaves) {
-                if (leaf.pane_id == source_id) {
-                    on_reorder_leaf (leaf, target);
-                    return;
-                }
-            }
+        private LeafPane? leaf_by_id (string id) {
+            foreach (var leaf in leaves)
+                if (leaf.pane_id == id) return leaf;
+            return null;
+        }
+
+        private int leaves_in_window (LeafsWindow win) {
+            int count = 0;
+            foreach (var leaf in leaves)
+                if (window_of (leaf) == win) count++;
+            return count;
         }
 
         private void on_close_leaf (LeafPane pane) {
+            if (!leaves.contains (pane)) return;
             var win = window_of (pane);
             // Count siblings in the same window
             int siblings = 0;
@@ -389,25 +516,44 @@ namespace Singularity.Apps {
 
             if (win == main_window && leaves.size == 1) {
                 // Last leaf in the only window → quit
+                pane.persist_state ();
                 save_session ();
+                pane.prepare_close ();
                 main_window.close ();
                 return;
             }
             if (siblings == 1) {
                 // Last leaf in this flower → close just the flower window
-                leaves.remove (pane);
-                leaf_window.unset (pane);
+                remove_leaf_from_layout (pane, win);
                 if (win != main_window) {
                     flowers.remove (win);
+                    window_cells.unset (win);
+                    window_layout.unset (win);
                     win.close ();
                 } else {
                     rebuild_separators_in (win);
                 }
+                save_session ();
                 return;
             }
+            if (remove_leaf_from_layout (pane, win))
+                rebuild_separators_in (win);
+            save_session ();
+        }
+
+        private bool remove_leaf_from_layout (LeafPane pane, LeafsWindow win) {
+            var cell = leaf_cell[pane];
+            cell.remove_leaf (pane);
+            bool removed_cell = cell.leaves.is_empty;
+            if (removed_cell) {
+                remove_layout_cell (win, cell);
+                window_cells[win].remove (cell);
+            }
+            pane.prepare_close ();
             leaves.remove (pane);
             leaf_window.unset (pane);
-            rebuild_separators_in (win);
+            leaf_cell.unset (pane);
+            return removed_cell;
         }
 
         private int _bloom_cascade = 0;
@@ -574,70 +720,216 @@ namespace Singularity.Apps {
             insert_leaf_after (focused, null, null);
         }
 
+        private void add_tab_after_focused () {
+            LeafPane? focused = get_focused_leaf ();
+            insert_tab_after (focused, null, null);
+        }
+
         private LeafPane? get_focused_leaf () {
             foreach (var leaf in leaves) {
                 if (leaf.has_focus ()) return leaf;
+            }
+            foreach (var cells in window_cells.values) {
+                for (int i = cells.size - 1; i >= 0; i--) {
+                    var active = cells[i].active_leaf ();
+                    if (active != null) return active;
+                }
             }
             return leaves.size > 0 ? leaves.last () : null;
         }
 
         private Vte.Terminal? get_focused_terminal () {
             var leaf = get_focused_leaf ();
-            if (leaf == null) return null;
-            // If a bug terminal is active in this leaf, return that instead
-            var bug = leaf.get_active_bug ();
-            return bug ?? leaf.terminal;
+            return leaf != null ? leaf.terminal : null;
         }
 
-        private void collect_leaf_panes (Gtk.Widget? w, ArrayList<LeafPane> outl) {
-            if (w == null) return;
-            if (w is LeafPane) { outl.add ((LeafPane) w); return; }
-            if (w is Gtk.Paned) {
-                collect_leaf_panes (((Gtk.Paned) w).get_start_child (), outl);
-                collect_leaf_panes (((Gtk.Paned) w).get_end_child (), outl);
+        private void rebuild_separators_in (LeafsWindow win) {
+            var cells = window_cells[win];
+            foreach (var cell in cells)
+                detach_cell_tabs (win, cell);
+
+            var c = win.leaves_box.get_first_child ();
+            while (c != null) { var nx = c.get_next_sibling (); win.leaves_box.remove (c); c = nx; }
+            if (cells.is_empty) {
+                window_layout.unset (win);
                 return;
             }
-            var c = w.get_first_child ();
-            while (c != null) { collect_leaf_panes (c, outl); c = c.get_next_sibling (); }
+
+            var root = ensure_window_layout (win);
+            if (root != null)
+                win.leaves_box.append (build_tiled_widget (root));
+
+            foreach (var cell in cells)
+                foreach (var leaf in cell.leaves)
+                    leaf.redraw_terminals ();
         }
 
-        // Rebuild the window's layout as a chain of horizontal GtkPaned so each
-        // leaf column can be resized by dragging the divider. The model
-        // (`leaves` + `leaf_window`) is the source of truth; this only rebuilds
-        // the widget tree from it.
-        private void rebuild_separators_in (LeafsWindow win) {
-            // Unparent every leaf currently shown so clearing the box doesn't
-            // destroy panes that are merely being moved/reordered.
-            var present = new ArrayList<LeafPane> ();
-            var c = win.leaves_box.get_first_child ();
-            while (c != null) { collect_leaf_panes (c, present); c = c.get_next_sibling (); }
-            foreach (var l in present) if (l.get_parent () != null) l.unparent ();
-
-            c = win.leaves_box.get_first_child ();
-            while (c != null) { var nx = c.get_next_sibling (); win.leaves_box.remove (c); c = nx; }
-
-            var wl = new ArrayList<LeafPane> ();
-            foreach (var l in leaves) if (leaf_window.has_key (l) && leaf_window[l] == win) wl.add (l);
-            if (wl.size == 0) return;
-
-            Gtk.Widget root = wl.get (wl.size - 1);
-            for (int i = wl.size - 2; i >= 0; i--) {
-                var paned = new Gtk.Paned (Orientation.HORIZONTAL);
-                paned.add_css_class ("leaf-paned");
-                paned.set_start_child (wl.get (i));
-                paned.set_end_child (root);
-                paned.resize_start_child = true;
-                paned.resize_end_child = true;
-                paned.shrink_start_child = false;
-                paned.shrink_end_child = false;
-                root = paned;
+        private void detach_cell_tabs (LeafsWindow win, LeafCell cell) {
+            var parent = cell.tabs.get_parent ();
+            if (parent == null) return;
+            if (parent == win.leaves_box) {
+                win.leaves_box.remove (cell.tabs);
+                return;
             }
-            win.leaves_box.append (root);
+            var paned = parent as Gtk.Paned;
+            if (paned != null) {
+                if (paned.get_start_child () == cell.tabs)
+                    paned.set_start_child (null);
+                else if (paned.get_end_child () == cell.tabs)
+                    paned.set_end_child (null);
+                return;
+            }
+            cell.tabs.unparent ();
+        }
 
-            var shown = new ArrayList<LeafPane> ();
-            var rc = win.leaves_box.get_first_child ();
-            while (rc != null) { collect_leaf_panes (rc, shown); rc = rc.get_next_sibling (); }
-            foreach (var l in shown) l.redraw_terminals ();
+        private LeafLayoutNode? ensure_window_layout (LeafsWindow win) {
+            if (window_layout.has_key (win))
+                return window_layout[win];
+            var cells = window_cells[win];
+            if (cells.is_empty) return null;
+            Orientation orientation = win.leaves_box.get_height () > win.leaves_box.get_width ()
+                ? Orientation.VERTICAL
+                : Orientation.HORIZONTAL;
+            var root = build_balanced_layout (cells, 0, cells.size, orientation);
+            window_layout[win] = root;
+            return root;
+        }
+
+        private LeafLayoutNode build_balanced_layout (ArrayList<LeafCell> cells,
+                                                       int first, int count,
+                                                       Orientation orientation) {
+            if (count == 1)
+                return new LeafLayoutNode.for_cell (cells[first]);
+
+            int first_count = count / 2;
+            int second_count = count - first_count;
+            Orientation next = orientation == Orientation.HORIZONTAL
+                ? Orientation.VERTICAL
+                : Orientation.HORIZONTAL;
+            return new LeafLayoutNode.for_split (
+                orientation,
+                build_balanced_layout (cells, first, first_count, next),
+                build_balanced_layout (cells, first + first_count, second_count, next));
+        }
+
+        private Gtk.Widget build_tiled_widget (LeafLayoutNode node) {
+            if (node.cell != null)
+                return node.cell.tabs;
+
+            var start = node.start;
+            var end = node.end;
+            if (start == null || end == null)
+                return start != null ? build_tiled_widget (start) : build_tiled_widget (end);
+
+            var paned = new Gtk.Paned (node.orientation);
+            paned.add_css_class ("leaf-paned");
+            paned.resize_start_child = true;
+            paned.resize_end_child = true;
+            paned.shrink_start_child = false;
+            paned.shrink_end_child = false;
+            paned.set_start_child (build_tiled_widget (start));
+            paned.set_end_child (build_tiled_widget (end));
+
+            double ratio = (double) start.leaf_count () / (double) node.leaf_count ();
+            GLib.Idle.add (() => {
+                int span = node.orientation == Orientation.HORIZONTAL
+                    ? paned.get_width ()
+                    : paned.get_height ();
+                if (span > 1)
+                    paned.position = (int) Math.round (span * ratio);
+                return GLib.Source.REMOVE;
+            });
+            return paned;
+        }
+
+        private void remove_layout_cell (LeafsWindow win, LeafCell cell) {
+            var root = ensure_window_layout (win);
+            if (root == null) return;
+            bool removed;
+            var updated = remove_layout_cell_from (root, cell, out removed);
+            if (!removed) return;
+            if (updated == null)
+                window_layout.unset (win);
+            else
+                window_layout[win] = updated;
+        }
+
+        private LeafLayoutNode? remove_layout_cell_from (LeafLayoutNode node,
+                                                         LeafCell cell,
+                                                         out bool removed) {
+            if (node.cell != null) {
+                removed = node.cell == cell;
+                return removed ? null : node;
+            }
+
+            bool child_removed;
+            if (node.start != null) {
+                var start = remove_layout_cell_from (node.start, cell, out child_removed);
+                if (child_removed) {
+                    removed = true;
+                    if (start == null) return node.end;
+                    node.start = start;
+                    return node;
+                }
+            }
+            if (node.end != null) {
+                var end = remove_layout_cell_from (node.end, cell, out child_removed);
+                if (child_removed) {
+                    removed = true;
+                    if (end == null) return node.start;
+                    node.end = end;
+                    return node;
+                }
+            }
+            removed = false;
+            return node;
+        }
+
+        private void insert_layout_cell (LeafsWindow win, LeafCell target,
+                                         LeafCell inserted, LeafDropZone zone) {
+            var root = ensure_window_layout (win);
+            if (root == null) {
+                window_layout[win] = new LeafLayoutNode.for_cell (inserted);
+                return;
+            }
+
+            Orientation orientation = zone == LeafDropZone.LEFT || zone == LeafDropZone.RIGHT
+                ? Orientation.HORIZONTAL
+                : Orientation.VERTICAL;
+            bool before = zone == LeafDropZone.LEFT || zone == LeafDropZone.TOP;
+            var target_node = new LeafLayoutNode.for_cell (target);
+            var inserted_node = new LeafLayoutNode.for_cell (inserted);
+            var split = new LeafLayoutNode.for_split (
+                orientation,
+                before ? inserted_node : target_node,
+                before ? target_node : inserted_node);
+            bool replaced;
+            var updated = replace_layout_cell (root, target, split, out replaced);
+            window_layout[win] = replaced ? updated : build_balanced_layout (
+                window_cells[win], 0, window_cells[win].size, orientation);
+        }
+
+        private LeafLayoutNode replace_layout_cell (LeafLayoutNode node,
+                                                    LeafCell target,
+                                                    LeafLayoutNode replacement,
+                                                    out bool replaced) {
+            if (node.cell != null) {
+                replaced = node.cell == target;
+                return replaced ? replacement : node;
+            }
+
+            if (node.start != null) {
+                node.start = replace_layout_cell (
+                    node.start, target, replacement, out replaced);
+                if (replaced) return node;
+            }
+            if (node.end != null) {
+                node.end = replace_layout_cell (
+                    node.end, target, replacement, out replaced);
+                if (replaced) return node;
+            }
+            replaced = false;
+            return node;
         }
 
         private Singularity.Widgets.PreferencesWindow? prefs_win = null;
@@ -718,49 +1010,235 @@ namespace Singularity.Apps {
                 leaf.apply_settings (settings);
         }
 
+        private void queue_save_session () {
+            if (restoring_session || session_save_source != 0) return;
+            session_save_source = GLib.Timeout.add (250, () => {
+                session_save_source = 0;
+                save_session ();
+                return GLib.Source.REMOVE;
+            });
+        }
+
         private void save_session () {
+            if (leaves == null || main_window == null) return;
+            foreach (var leaf in leaves)
+                leaf.persist_state ();
+
             var builder = new Json.Builder ();
+            builder.begin_object ();
+            builder.set_member_name ("version");
+            builder.add_int_value (3);
+            builder.set_member_name ("windows");
             builder.begin_array ();
-            foreach (var leaf in leaves) {
-                builder.begin_object ();
-                builder.set_member_name ("id");  builder.add_string_value (leaf.pane_id);
-                builder.set_member_name ("cwd"); builder.add_string_value (leaf.get_working_dir ());
-                builder.end_object ();
-            }
+            append_window_session (builder, main_window, true);
+            foreach (var win in flowers)
+                append_window_session (builder, win, false);
             builder.end_array ();
+            builder.end_object ();
             var gen = new Json.Generator ();
             gen.set_root (builder.get_root ());
             settings.set_string ("session", gen.to_data (null));
-            // Force GSettings to flush to disk before exit
             GLib.Settings.sync ();
+        }
+
+        private void append_window_session (Json.Builder builder, LeafsWindow win, bool is_main) {
+            if (!window_cells.has_key (win)) return;
+            builder.begin_object ();
+            builder.set_member_name ("main");
+            builder.add_boolean_value (is_main);
+            builder.set_member_name ("cells");
+            builder.begin_array ();
+            foreach (var cell in window_cells[win]) {
+                builder.begin_object ();
+                builder.set_member_name ("active");
+                builder.add_int_value (cell.tabs.notebook.get_current_page ());
+                builder.set_member_name ("leaves");
+                builder.begin_array ();
+                foreach (var leaf in cell.leaves) {
+                    builder.begin_object ();
+                    builder.set_member_name ("id");
+                    builder.add_string_value (leaf.pane_id);
+                    builder.set_member_name ("cwd");
+                    builder.add_string_value (leaf.get_working_dir ());
+                    builder.end_object ();
+                }
+                builder.end_array ();
+                builder.end_object ();
+            }
+            builder.end_array ();
+            var layout = ensure_window_layout (win);
+            if (layout != null) {
+                builder.set_member_name ("layout");
+                append_layout_session (builder, layout, window_cells[win]);
+            }
+            builder.end_object ();
+        }
+
+        private void append_layout_session (Json.Builder builder, LeafLayoutNode node,
+                                            ArrayList<LeafCell> cells) {
+            builder.begin_object ();
+            if (node.cell != null) {
+                builder.set_member_name ("cell");
+                builder.add_int_value (cells.index_of (node.cell));
+            } else {
+                builder.set_member_name ("orientation");
+                builder.add_string_value (node.orientation == Orientation.HORIZONTAL
+                    ? "horizontal"
+                    : "vertical");
+                builder.set_member_name ("start");
+                append_layout_session (builder, node.start, cells);
+                builder.set_member_name ("end");
+                append_layout_session (builder, node.end, cells);
+            }
+            builder.end_object ();
         }
 
         private void restore_session () {
             string json = settings.get_string ("session");
             if (json == null || json == "") return;
+            restoring_session = true;
             try {
                 var parser = new Json.Parser ();
                 parser.load_from_data (json);
                 var root = parser.get_root ();
                 if (root == null) return;
-                var arr = root.get_array ();
-                if (arr == null) return;
-                arr.foreach_element ((a, i, node) => {
-                    var obj = node.get_object ();
-                    if (obj == null) return;
-                    string cwd = obj.has_member ("cwd")
-                        ? obj.get_string_member ("cwd")
-                        : GLib.Environment.get_home_dir ();
-                    string id = obj.has_member ("id")
-                        ? obj.get_string_member ("id")
-                        : GLib.Uuid.string_random ();
-                    if (!FileUtils.test (cwd, FileTest.IS_DIR))
-                        cwd = GLib.Environment.get_home_dir ();
-                    add_leaf (cwd, id);
-                });
+                if (root.get_node_type () == Json.NodeType.ARRAY)
+                    restore_legacy_session (root.get_array ());
+                else if (root.get_node_type () == Json.NodeType.OBJECT)
+                    restore_tiled_session (root.get_object ());
             } catch (Error e) {
                 warning ("Leafs: failed to restore session: %s", e.message);
+            } finally {
+                restoring_session = false;
             }
+        }
+
+        private void restore_legacy_session (Json.Array? panes) {
+            if (panes == null) return;
+            for (uint i = 0; i < panes.get_length (); i++) {
+                var pane = panes.get_object_element (i);
+                if (pane == null) continue;
+                var cell = new LeafCell ();
+                cell.close_requested.connect (on_close_leaf);
+                restore_leaf (pane, main_window, cell);
+                if (!cell.leaves.is_empty)
+                    window_cells[main_window].add (cell);
+            }
+            rebuild_separators_in (main_window);
+        }
+
+        private void restore_tiled_session (Json.Object? session) {
+            if (session == null || !session.has_member ("windows")) return;
+            var windows = session.get_array_member ("windows");
+            if (windows == null) return;
+            bool restored_main = false;
+
+            for (uint i = 0; i < windows.get_length (); i++) {
+                var saved_window = windows.get_object_element (i);
+                if (saved_window == null || !saved_window.has_member ("cells")) continue;
+                bool wants_main = saved_window.has_member ("main")
+                    && saved_window.get_boolean_member ("main");
+                LeafsWindow win;
+                if (wants_main && !restored_main) {
+                    win = main_window;
+                    restored_main = true;
+                } else {
+                    win = create_flower_window ();
+                }
+
+                var cells = saved_window.get_array_member ("cells");
+                for (uint j = 0; j < cells.get_length (); j++) {
+                    var saved_cell = cells.get_object_element (j);
+                    if (saved_cell == null || !saved_cell.has_member ("leaves")) continue;
+                    var cell = new LeafCell ();
+                    cell.close_requested.connect (on_close_leaf);
+                    var saved_leaves = saved_cell.get_array_member ("leaves");
+                    for (uint k = 0; k < saved_leaves.get_length (); k++) {
+                        var saved_leaf = saved_leaves.get_object_element (k);
+                        if (saved_leaf != null)
+                            restore_leaf (saved_leaf, win, cell);
+                    }
+                    if (cell.leaves.is_empty) continue;
+                    window_cells[win].add (cell);
+                    int active = saved_cell.has_member ("active")
+                        ? (int) saved_cell.get_int_member ("active")
+                        : 0;
+                    cell.tabs.notebook.set_current_page (
+                        active.clamp (0, cell.leaves.size - 1));
+                }
+                if (saved_window.has_member ("layout")) {
+                    var layout = restore_layout_session (
+                        saved_window.get_object_member ("layout"), window_cells[win]);
+                    if (layout != null && layout_matches_cells (layout, window_cells[win]))
+                        window_layout[win] = layout;
+                }
+                rebuild_separators_in (win);
+                if (win != main_window)
+                    win.present ();
+            }
+        }
+
+        private LeafLayoutNode? restore_layout_session (Json.Object? saved,
+                                                        ArrayList<LeafCell> cells) {
+            if (saved == null) return null;
+            if (saved.has_member ("cell")) {
+                int index = (int) saved.get_int_member ("cell");
+                return index >= 0 && index < cells.size
+                    ? new LeafLayoutNode.for_cell (cells[index])
+                    : null;
+            }
+            if (!saved.has_member ("orientation") ||
+                !saved.has_member ("start") || !saved.has_member ("end"))
+                return null;
+
+            string orientation = saved.get_string_member ("orientation");
+            if (orientation != "horizontal" && orientation != "vertical")
+                return null;
+            var start = restore_layout_session (
+                saved.get_object_member ("start"), cells);
+            var end = restore_layout_session (
+                saved.get_object_member ("end"), cells);
+            if (start == null || end == null) return null;
+            return new LeafLayoutNode.for_split (
+                orientation == "horizontal" ? Orientation.HORIZONTAL : Orientation.VERTICAL,
+                start, end);
+        }
+
+        private bool layout_matches_cells (LeafLayoutNode layout,
+                                           ArrayList<LeafCell> cells) {
+            var found = new HashSet<LeafCell> ();
+            if (!collect_layout_cells (layout, found) || found.size != cells.size)
+                return false;
+            foreach (var cell in cells)
+                if (!found.contains (cell)) return false;
+            return true;
+        }
+
+        private bool collect_layout_cells (LeafLayoutNode node,
+                                           HashSet<LeafCell> found) {
+            if (node.cell != null)
+                return found.add (node.cell);
+            return node.start != null && node.end != null
+                && collect_layout_cells (node.start, found)
+                && collect_layout_cells (node.end, found);
+        }
+
+        private void restore_leaf (Json.Object saved, LeafsWindow win, LeafCell cell) {
+            string cwd = saved.has_member ("cwd")
+                ? saved.get_string_member ("cwd")
+                : GLib.Environment.get_home_dir ();
+            string id = saved.has_member ("id")
+                ? saved.get_string_member ("id")
+                : GLib.Uuid.string_random ();
+            if (!FileUtils.test (cwd, FileTest.IS_DIR))
+                cwd = GLib.Environment.get_home_dir ();
+
+            var leaf = new LeafPane (settings, cwd, id);
+            connect_leaf_signals (leaf);
+            leaves.add (leaf);
+            leaf_window[leaf] = win;
+            leaf_cell[leaf] = cell;
+            cell.add_leaf (leaf, false);
         }
 
         private void load_ssh_sessions () {
@@ -1015,7 +1493,6 @@ namespace Singularity.Apps {
                 box-shadow: 0 4px 12px alpha(@shadow_color, 0.3);
                 margin: 4px;
                 background-color: @window_bg;
-                overflow: hidden;
             }
             .terminal-overlay {
                 border-radius: 12px;
@@ -1037,16 +1514,12 @@ namespace Singularity.Apps {
             .terminal-close-button:hover {
                 background-color: @destructive_color;
             }
-            .terminal-paned separator {
+            .leaf-paned > separator {
                 background-color: transparent;
                 min-width: 8px;
                 min-height: 8px;
             }
-            .leaf-bug-paned > separator {
-                background-color: transparent;
-                min-height: 8px;
-            }
-            .leaf-bug-paned > separator:hover {
+            .leaf-paned > separator:hover {
                 background-color: alpha(@accent_color, 0.5);
             }
             .bloom-terminal {

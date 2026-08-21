@@ -24,7 +24,7 @@
     <key name="session" type="s">
       <default>''</default>
       <summary>Saved Session</summary>
-      <description>JSON array of open pane data (id, cwd) restored on next launch.</description>
+      <description>JSON data for tiled cells, tabs, windows, leaf IDs, and working directories.</description>
     </key>
     <key name="ssh-sessions" type="as">
       <default>[]</default>

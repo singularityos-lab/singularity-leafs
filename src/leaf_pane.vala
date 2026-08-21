@@ -7,6 +7,22 @@ using Gee;
 
 namespace Singularity.Apps {
 
+    public enum LeafDropZone {
+        LEFT,
+        RIGHT,
+        TOP,
+        BOTTOM,
+        CENTER
+    }
+
+    private class LeafDragPayload : Object {
+        public string id;
+
+        public LeafDragPayload (string id) {
+            this.id = id;
+        }
+    }
+
     public class LeafPane : Box {
         public Vte.Terminal terminal;
         private Singularity.Widgets.HoverControls hover_controls;
@@ -16,105 +32,88 @@ namespace Singularity.Apps {
         public int shell_pid = 0;
         public string? ssh_host = null;
 
+        private string _state_dir;
+        private string _history_path;
+        private string _snapshot_path;
+        private string _command_state_path;
+        private uint _snapshot_source = 0;
+        private bool _closing = false;
+        private bool _direct_command = false;
+
+        private const int SNAPSHOT_MAX_LINES = 200;
+        private const int SNAPSHOT_MAX_CHARS = 65536;
+        private const string SNAPSHOT_SEPARATOR = "------------------------------------------------";
+
         // Kept alive to prevent Vala from freeing popovers while GTK still uses them.
         private Singularity.Widgets.ContextMenu? _add_menu   = null;
         private Singularity.Widgets.ContextMenu? _close_menu = null;
 
-        // Bug (sub-terminal) support
-        private GLib.Settings                          _settings;
-        private Singularity.Widgets.ChipBar            _chip_bar;
-        private Gtk.Box                                _bug_host;
-        private Gee.HashMap<string, Vte.Terminal>      _bugs;
-        private Gee.HashMap<string, ulong>             _bug_title_handlers;
-        private string?                                _active_bug   = null;
-        private int                                    _bug_counter  = 0;
-
-        // Bug pane resize
-        private Gtk.Paned _split;
-        private int    _bug_height       = 200;
-        private const int BUG_MIN_HEIGHT = 60;
-        private const int BUG_MAX_HEIGHT = 600;
+        private GLib.Settings _settings;
+        private Gtk.DrawingArea _tile_drop_overlay;
+        private LeafDropZone _tile_drop_zone = LeafDropZone.CENTER;
 
         public signal void close_requested     (LeafPane pane);
         public signal void add_requested       (LeafPane pane);
+        public signal void tab_requested       (LeafPane pane);
         public signal void flower_requested    ();    
         public signal void detach_requested    (LeafPane pane); 
         public signal void settings_requested  ();
         public signal void close_all_requested ();
-        public signal void reorder_requested    (LeafPane source, LeafPane target);
-        public signal void lookup_reorder       (string source_id, LeafPane target);
-        public signal void bug_detach_requested (LeafPane pane, string bug_id);
+        public signal void tile_drop_requested  (string source_id, LeafPane target,
+                                                 LeafDropZone zone);
+        public signal void state_changed        ();
 
         public LeafPane (GLib.Settings settings, string? cwd = null, string? id = null,
-                         string[]? spawn_cmd = null, Vte.Terminal? adopted_terminal = null) {
+                         string[]? spawn_cmd = null) {
             Object (orientation: Orientation.VERTICAL, spacing: 0);
             hexpand = true;
             vexpand = true;
             pane_id   = id ?? GLib.Uuid.string_random ();
             _settings = settings;
-            _bugs     = new Gee.HashMap<string, Vte.Terminal> ();
-            _bug_title_handlers = new Gee.HashMap<string, ulong> ();
+            _direct_command = spawn_cmd != null;
 
-            terminal = adopted_terminal ?? new Vte.Terminal ();
+            _state_dir = GLib.Path.build_filename (
+                GLib.Environment.get_user_data_dir (), "singularity", "leafs");
+            _history_path = GLib.Path.build_filename (
+                _state_dir, "history-%s.hist".printf (pane_id));
+            _snapshot_path = GLib.Path.build_filename (
+                _state_dir, "snapshot-%s.txt".printf (pane_id));
+            _command_state_path = GLib.Path.build_filename (
+                _state_dir, "command-%s.state".printf (pane_id));
+            ensure_state_dir ();
+
+            terminal = new Vte.Terminal ();
             terminal.hexpand = true;
             terminal.vexpand = true;
             _apply_settings (settings);
 
-            if (adopted_terminal == null) {
-                string hist_dir = GLib.Path.build_filename (
-                    GLib.Environment.get_home_dir (),
-                    ".local", "share", "singularity", "leafs");
-                try { GLib.DirUtils.create_with_parents (hist_dir, 0755); } catch {}
-                string hist_path = GLib.Path.build_filename (hist_dir, "history-%s.hist".printf (pane_id));
+            string shell = resolve_login_shell ();
+            string[] envv = build_shell_environment ();
+            string[] argv = spawn_cmd ?? shell_argv (shell);
 
-                if (!FileUtils.test (hist_path, FileTest.EXISTS)) {
-                    string home = GLib.Environment.get_home_dir ();
-                    string[] candidates = {
-                        GLib.Environment.get_variable ("HISTFILE") ?? "",
-                        GLib.Path.build_filename (home, ".zsh_history"),
-                        GLib.Path.build_filename (home, ".bash_history"),
-                        GLib.Path.build_filename (home, ".history")
-                    };
-                    foreach (var candidate in candidates) {
-                        if (candidate != "" && FileUtils.test (candidate, FileTest.EXISTS)) {
-                            try {
-                                string content;
-                                FileUtils.get_contents (candidate, out content);
-                                FileUtils.set_contents (hist_path, content);
-                            } catch {}
-                            break;
-                        }
-                    }
+            show_previous_context ();
+
+            terminal.spawn_async (
+                Vte.PtyFlags.DEFAULT,
+                cwd ?? GLib.Environment.get_home_dir (),
+                argv,
+                envv,
+                (GLib.SpawnFlags) 0,
+                null, -1, null,
+                (t, pid, err) => {
+                    if (err != null) warning ("LeafPane spawn: %s", err.message);
+                    else shell_pid = (int) pid;
                 }
-
-                string shell = resolve_login_shell ();
-                string[] envv = {
-                    "HISTFILE=" + hist_path,
-                    "HISTSIZE=10000",
-                    "HISTFILESIZE=10000",
-                    "PROMPT_COMMAND=history -a"
-                };
-                string[] argv = spawn_cmd ?? new string[] { shell };
-
-                terminal.spawn_async (
-                    Vte.PtyFlags.DEFAULT,
-                    cwd ?? GLib.Environment.get_home_dir (),
-                    argv,
-                    envv,
-                    GLib.SpawnFlags.DO_NOT_REAP_CHILD,
-                    null, -1, null,
-                    (t, pid, err) => {
-                        if (err != null) warning ("LeafPane spawn: %s", err.message);
-                        else shell_pid = (int) pid;
-                    }
-                );
-            }
+            );
 
             // When the shell exits (e.g. the `exit` command), close this pane
             // instead of leaving a dead terminal hanging.
             terminal.child_exited.connect ((status) => {
-                close_requested (this);
+                if (!_closing)
+                    close_requested (this);
             });
+            terminal.contents_changed.connect (queue_snapshot);
+            terminal.current_directory_uri_changed.connect (() => state_changed ());
 
             if (spawn_cmd != null && spawn_cmd.length > 0 &&
                 (spawn_cmd[0] == "ssh" || spawn_cmd[0].has_suffix ("/ssh") ||
@@ -160,14 +159,43 @@ namespace Singularity.Apps {
             grip_btn.add_controller (grip_drag);
             hover_controls.add_control (grip_btn);
 
+            var tile_drag_btn = new Button ();
+            tile_drag_btn.add_css_class ("flat");
+            tile_drag_btn.add_css_class ("leaf-tile-drag-handle");
+            tile_drag_btn.set_size_request (28, 28);
+            tile_drag_btn.tooltip_text = _("Move Tile");
+            var tile_drag_icon = new Gtk.Image.from_icon_name (
+                "leaf-tile-drag-symbolic");
+            tile_drag_icon.pixel_size = 14;
+            tile_drag_btn.set_child (tile_drag_icon);
+
+            var tile_drag = new Gtk.DragSource ();
+            tile_drag.set_actions (Gdk.DragAction.MOVE);
+            tile_drag.prepare.connect ((x, y) => {
+                return new Gdk.ContentProvider.for_value (
+                    new LeafDragPayload (pane_id));
+            });
+            tile_drag.drag_begin.connect ((drag) => {
+                var paintable = new Gtk.WidgetPaintable (tile_drag_btn);
+                tile_drag.set_icon (paintable,
+                    tile_drag_btn.get_width () / 2,
+                    tile_drag_btn.get_height () / 2);
+                tile_drag_btn.add_css_class ("dragging");
+            });
+            tile_drag.drag_end.connect ((drag, delete_data) => {
+                tile_drag_btn.remove_css_class ("dragging");
+            });
+            tile_drag_btn.add_controller (tile_drag);
+            hover_controls.add_control (tile_drag_btn);
+
             var add_btn = new Button.from_icon_name ("list-add-symbolic");
-            add_btn.tooltip_text = _("New leaf / bug");
+            add_btn.tooltip_text = _("New leaf / tab");
             add_btn.clicked.connect (() => {
                 _add_menu = new Singularity.Widgets.ContextMenu (add_btn);
                 Gdk.Rectangle rect = { 0, 0, 1, 1 };
                 _add_menu.set_pointing_to (rect);
                 _add_menu.add_item ("New Leaf",    "list-add-symbolic",    () => add_requested (this));
-                _add_menu.add_item ("New Bug",     "go-down-symbolic",     () => _spawn_bug ());
+                _add_menu.add_item ("New Tab",     "tab-new-symbolic",     () => tab_requested (this));
                 _add_menu.add_item ("New Flower",  "window-new-symbolic",  () => flower_requested ());
                 _add_menu.add_separator ();
                 _add_menu.add_item ("Detach Leaf to Flower", "window-restore-symbolic",
@@ -204,47 +232,289 @@ namespace Singularity.Apps {
             });
             hover_controls.add_control (close_btn);
 
-            _split = new Gtk.Paned (Orientation.VERTICAL);
-            _split.add_css_class ("leaf-bug-paned");
-            _split.hexpand = true;
-            _split.vexpand = true;
-            _split.resize_start_child = true;
-            _split.resize_end_child   = true;
-            _split.shrink_start_child = false;
-            _split.shrink_end_child   = false;
-            _split.set_start_child (hover_controls);
-            append (_split);
+            var tile_overlay = new Gtk.Overlay ();
+            tile_overlay.hexpand = true;
+            tile_overlay.vexpand = true;
+            tile_overlay.set_child (hover_controls);
 
-            _bug_host = new Gtk.Box (Orientation.VERTICAL, 0);
-            _bug_host.hexpand = true;
-            _bug_host.vexpand = true;
+            _tile_drop_overlay = new Gtk.DrawingArea ();
+            _tile_drop_overlay.hexpand = true;
+            _tile_drop_overlay.vexpand = true;
+            _tile_drop_overlay.can_target = false;
+            _tile_drop_overlay.visible = false;
+            _tile_drop_overlay.set_draw_func (draw_tile_drop_zone);
+            tile_overlay.add_overlay (_tile_drop_overlay);
+            append (tile_overlay);
 
-            _split.notify["position"].connect (() => {
-                if (_active_bug == null) return;
-                int h = _split.get_height ();
-                if (h > 1)
-                    _bug_height = (h - _split.position).clamp (BUG_MIN_HEIGHT, BUG_MAX_HEIGHT);
+            var tile_target = new Gtk.DropTarget (
+                typeof (LeafDragPayload), Gdk.DragAction.MOVE);
+            tile_target.motion.connect ((x, y) => {
+                _tile_drop_zone = drop_zone_at (x, y);
+                _tile_drop_overlay.visible = true;
+                _tile_drop_overlay.queue_draw ();
+                return Gdk.DragAction.MOVE;
             });
-
-            // Chip bar - visible only when at least one bug exists.
-            _chip_bar = new Singularity.Widgets.ChipBar ();
-            _chip_bar.visible = false;
-            // Session chips can be reordered by dragging them.
-            _chip_bar.reorderable = true;
-            _chip_bar.detachable = true;
-            _chip_bar.chip_activated.connect (_on_chip_activated);
-            _chip_bar.chip_closed.connect    (_on_chip_closed);
-            _chip_bar.chip_detached.connect ((id) => bug_detach_requested (this, id));
-            append (_chip_bar);
+            tile_target.leave.connect (() => {
+                _tile_drop_overlay.visible = false;
+            });
+            tile_target.drop.connect ((value, x, y) => {
+                _tile_drop_overlay.visible = false;
+                var payload = value.get_object () as LeafDragPayload;
+                if (payload == null || payload.id == pane_id) return false;
+                tile_drop_requested (payload.id, this, drop_zone_at (x, y));
+                return true;
+            });
+            add_controller (tile_target);
 
             _install_context_menu (terminal);
+        }
+
+        private LeafDropZone drop_zone_at (double x, double y) {
+            double width = double.max (1.0, get_width ());
+            double height = double.max (1.0, get_height ());
+            double nx = x / width;
+            double ny = y / height;
+            if (nx >= 0.25 && nx <= 0.75 && ny >= 0.25 && ny <= 0.75)
+                return LeafDropZone.CENTER;
+
+            double edge = nx;
+            LeafDropZone zone = LeafDropZone.LEFT;
+            if (1.0 - nx < edge) {
+                edge = 1.0 - nx;
+                zone = LeafDropZone.RIGHT;
+            }
+            if (ny < edge) {
+                edge = ny;
+                zone = LeafDropZone.TOP;
+            }
+            if (1.0 - ny < edge)
+                zone = LeafDropZone.BOTTOM;
+            return zone;
+        }
+
+        private void draw_tile_drop_zone (Gtk.DrawingArea area, Cairo.Context cr,
+                                           int width, int height) {
+            double x = 0;
+            double y = 0;
+            double w = width;
+            double h = height;
+            switch (_tile_drop_zone) {
+                case LeafDropZone.LEFT:
+                    w /= 2;
+                    break;
+                case LeafDropZone.RIGHT:
+                    x = width / 2.0;
+                    w /= 2;
+                    break;
+                case LeafDropZone.TOP:
+                    h /= 2;
+                    break;
+                case LeafDropZone.BOTTOM:
+                    y = height / 2.0;
+                    h /= 2;
+                    break;
+                case LeafDropZone.CENTER:
+                    x = width * 0.2;
+                    y = height * 0.2;
+                    w = width * 0.6;
+                    h = height * 0.6;
+                    break;
+            }
+
+            Gdk.RGBA accent = Gdk.RGBA ();
+            if (!accent.parse (
+                    Singularity.Style.StyleManager.get_default ().accent_hex))
+                accent.parse ("#3584e4");
+            cr.rectangle (x + 3, y + 3, double.max (0, w - 6), double.max (0, h - 6));
+            cr.set_source_rgba (accent.red, accent.green, accent.blue, 0.24);
+            cr.fill_preserve ();
+            cr.set_source_rgba (accent.red, accent.green, accent.blue, 0.9);
+            cr.set_line_width (2);
+            cr.stroke ();
+        }
+
+        private void ensure_state_dir () {
+            if (GLib.DirUtils.create_with_parents (_state_dir, 0700) != 0)
+                warning ("LeafPane state directory: %s", _state_dir);
+            Posix.chmod (_state_dir, 0700);
+        }
+
+        private string[] build_shell_environment () {
+            if (!FileUtils.test (_history_path, FileTest.EXISTS))
+                write_private_file (_history_path, "");
+            else
+                Posix.chmod (_history_path, 0600);
+
+            string[] envv = GLib.Environ.get ();
+            envv = GLib.Environ.set_variable ((owned) envv, "HISTFILE", _history_path, true);
+            envv = GLib.Environ.set_variable ((owned) envv, "HISTSIZE", "10000", true);
+            envv = GLib.Environ.set_variable ((owned) envv, "HISTFILESIZE", "10000", true);
+            envv = GLib.Environ.set_variable (
+                (owned) envv, "LEAFS_COMMAND_STATE_FILE", _command_state_path, true);
+            return envv;
+        }
+
+        private string[] shell_argv (string shell) {
+            if (GLib.Path.get_basename (shell) != "bash")
+                return new string[] { shell };
+
+            string rc_path = GLib.Path.build_filename (
+                _state_dir, "bashrc-%s.sh".printf (pane_id));
+            string rc = """
+if [ -r "$HOME/.bashrc" ]; then
+    . "$HOME/.bashrc"
+fi
+
+shopt -s histappend
+
+__leafs_history_sync() {
+    local status=$?
+    local command=""
+    if [ "${__leafs_history_ready:-0}" = 1 ]; then
+        command="$(builtin history 1 2>/dev/null)"
+        command="${command#"${command%%[![:space:]]*}"}"
+        command="${command#* }"
+        command="${command#"${command%%[![:space:]]*}"}"
+    fi
+    builtin history -a
+    if [ "${__leafs_history_ready:-0}" = 1 ]; then
+        local tmp
+        tmp="${LEAFS_COMMAND_STATE_FILE}.tmp.$$"
+        {
+            printf '%s\n' "$status"
+            printf '%s\n' "$command"
+        } > "$tmp"
+        chmod 600 "$tmp"
+        mv -f "$tmp" "$LEAFS_COMMAND_STATE_FILE"
+    else
+        __leafs_history_ready=1
+    fi
+    return "$status"
+}
+
+case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
+    "declare -a"*) PROMPT_COMMAND=(__leafs_history_sync "${PROMPT_COMMAND[@]}") ;;
+    *) PROMPT_COMMAND="__leafs_history_sync${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
+esac
+""";
+            write_private_file (rc_path, rc);
+            return new string[] { shell, "--rcfile", rc_path, "-i" };
+        }
+
+        private void show_previous_context () {
+            string context = "";
+            try {
+                FileUtils.get_contents (_snapshot_path, out context);
+            } catch (Error e) {
+                context = load_command_context ();
+            }
+            context = context.strip ();
+            if (context == "")
+                context = load_command_context ();
+            if (context == "") return;
+
+            context = sanitize_context (context);
+            string display = context.replace ("\r", "").replace ("\n", "\r\n");
+            display += "\r\n" + SNAPSHOT_SEPARATOR + "\r\n";
+            terminal.feed (display.data);
+        }
+
+        private string sanitize_context (string context) {
+            try {
+                var controls = new GLib.Regex (
+                    "[\\x{0000}-\\x{0008}\\x{000B}\\x{000C}\\x{000E}-\\x{001F}\\x{007F}]",
+                    GLib.RegexCompileFlags.OPTIMIZE);
+                return controls.replace (context, -1, 0, "");
+            } catch (Error e) {
+                return "";
+            }
+        }
+
+        private string load_command_context () {
+            try {
+                string state;
+                FileUtils.get_contents (_command_state_path, out state);
+                int newline = state.index_of_char ('\n');
+                if (newline < 0) return "";
+                string status = state.substring (0, newline).strip ();
+                string command = state.substring (newline + 1).strip ();
+                if (command == "") return "";
+                return "Last command: %s\nExit status: %s".printf (command, status);
+            } catch (Error e) {
+                return "";
+            }
+        }
+
+        private void queue_snapshot () {
+            if (_closing || _snapshot_source != 0) return;
+            _snapshot_source = GLib.Timeout.add (350, () => {
+                _snapshot_source = 0;
+                persist_state ();
+                return GLib.Source.REMOVE;
+            });
+        }
+
+        public void persist_state () {
+            string? text = terminal.get_text_format (Vte.Format.TEXT);
+            if (text == null) return;
+
+            bool had_previous_context = false;
+            int separator = text.last_index_of (SNAPSHOT_SEPARATOR);
+            if (separator >= 0) {
+                had_previous_context = true;
+                text = text.substring (separator + SNAPSHOT_SEPARATOR.length);
+            }
+            text = text.strip ();
+            if (text == "") return;
+
+            string[] lines = text.split ("\n");
+            if (had_previous_context && lines.length < 2) return;
+            if (!had_previous_context && lines.length < 2 && !_direct_command
+                && !FileUtils.test (_command_state_path, FileTest.EXISTS)) return;
+
+            int first = int.max (0, lines.length - SNAPSHOT_MAX_LINES);
+            var saved = new StringBuilder ();
+            for (int i = first; i < lines.length; i++) {
+                if (saved.len > 0) saved.append_c ('\n');
+                saved.append (lines[i]);
+            }
+
+            string snapshot = saved.str;
+            int chars = snapshot.char_count ();
+            if (chars > SNAPSHOT_MAX_CHARS) {
+                int offset = snapshot.index_of_nth_char (chars - SNAPSHOT_MAX_CHARS);
+                snapshot = snapshot.substring (offset);
+            }
+            write_private_file (_snapshot_path, snapshot);
+        }
+
+        public void prepare_close () {
+            if (_closing) return;
+            _closing = true;
+            if (_snapshot_source != 0) {
+                GLib.Source.remove (_snapshot_source);
+                _snapshot_source = 0;
+            }
+            persist_state ();
+            if (shell_pid > 0)
+                Posix.kill (shell_pid, Posix.Signal.HUP);
+        }
+
+        private void write_private_file (string path, string contents) {
+            string tmp = path + ".tmp";
+            try {
+                FileUtils.set_contents (tmp, contents);
+                Posix.chmod (tmp, 0600);
+                if (FileUtils.rename (tmp, path) != 0)
+                    warning ("LeafPane state rename failed: %s", path);
+            } catch (Error e) {
+                warning ("LeafPane state write: %s", e.message);
+            }
         }
 
         public void apply_settings (GLib.Settings settings) {
             _settings = settings;
             _apply_settings_to (terminal, settings);
-            foreach (var vte in _bugs.values)
-                _apply_settings_to (vte, settings);
         }
 
         // Counter for tmp filenames; doesn't need to be persisted.
@@ -339,49 +609,6 @@ namespace Singularity.Apps {
             return Singularity.Style.ThemeMode.get_default ().app_dark ();
         }
 
-        private void _spawn_bug () {
-            _bug_counter++;
-            string bug_id    = "bug-%d".printf (_bug_counter);
-            string bug_label = "#%d".printf (_bug_counter);
-
-            var vte = new Vte.Terminal ();
-            vte.hexpand = true;
-            vte.vexpand = false;
-            _apply_settings_to (vte, _settings);
-
-            string shell = resolve_login_shell ();
-            string cwd   = get_working_dir ();
-            vte.spawn_async (
-                Vte.PtyFlags.DEFAULT, cwd,
-                new string[] { shell }, null,
-                GLib.SpawnFlags.DO_NOT_REAP_CHILD,
-                null, -1, null,
-                (t, pid, err) => {
-                    if (err != null) warning ("Bug spawn: %s", err.message);
-                }
-            );
-
-            _bugs.set (bug_id, vte);
-            _chip_bar.add_chip (bug_id, bug_label);
-            _chip_bar.visible = true;
-
-            // Track VTE title, chip label (truncate to 10 chars)
-            string tracked_id = bug_id;
-            ulong title_handler = vte.window_title_changed.connect (() => {
-                string? t = vte.get_window_title ();
-                if (t == null || t.length == 0) return;
-                string display = t.char_count () > 10
-                    ? t.substring (0, t.index_of_nth_char (10)) + "…"
-                    : t;
-                _chip_bar.update_chip_label (tracked_id, display);
-            });
-            _bug_title_handlers.set (bug_id, title_handler);
-
-            _install_context_menu (vte);
-
-            _activate_bug (bug_id);
-        }
-
         private void _install_context_menu (Vte.Terminal vte) {
             if (vte.get_data<bool> ("leafs-context-menu-installed")) return;
             vte.set_data<bool> ("leafs-context-menu-installed", true);
@@ -401,104 +628,6 @@ namespace Singularity.Apps {
             vte.add_controller (click);
         }
 
-        private void _activate_bug (string id) {
-            // Clicking the active chip again, deactivate (collapse)
-            if (_active_bug == id) {
-                _deactivate_bug ();
-                return;
-            }
-
-            // Remove previous bug terminal from host
-            if (_active_bug != null) {
-                var prev = _bugs.get (_active_bug);
-                if (prev != null) _bug_host.remove (prev);
-            }
-
-            var vte = _bugs.get (id);
-            if (vte == null) return;
-
-            _bug_host.append (vte);
-            if (_split.get_end_child () != _bug_host)
-                _split.set_end_child (_bug_host);
-            _active_bug = id;
-            _chip_bar.set_active (id);
-            _apply_bug_height ();
-            vte.grab_focus ();
-        }
-
-        private void _apply_bug_height () {
-            int h = _split.get_height ();
-            if (h > 1) {
-                _set_split_for_height (h);
-            } else {
-                GLib.Idle.add (() => {
-                    int hh = _split.get_height ();
-                    if (hh > 1) _set_split_for_height (hh);
-                    return GLib.Source.REMOVE;
-                });
-            }
-        }
-
-        private void _set_split_for_height (int h) {
-            int lo = BUG_MIN_HEIGHT;
-            int hi = int.max (lo, h - BUG_MIN_HEIGHT);
-            _split.position = (h - _bug_height).clamp (lo, hi);
-        }
-
-        private void _deactivate_bug () {
-            if (_active_bug != null) {
-                var vte = _bugs.get (_active_bug);
-                if (vte != null) _bug_host.remove (vte);
-            }
-            _active_bug = null;
-            if (_split.get_end_child () == _bug_host)
-                _split.set_end_child (null);
-            _chip_bar.set_active (null);
-            terminal.grab_focus ();
-        }
-
-        private void _on_chip_activated (string id) {
-            _activate_bug (id);
-        }
-
-        private void _on_chip_closed (string id) {
-            var vte = _bugs.get (id);
-            if (_active_bug == id) {
-                if (vte != null) _bug_host.remove (vte);
-                _active_bug = null;
-                if (_split.get_end_child () == _bug_host)
-                    _split.set_end_child (null);
-            }
-            ulong title_handler = _bug_title_handlers.get (id);
-            if (title_handler != 0 && vte != null) vte.disconnect (title_handler);
-            _bug_title_handlers.unset (id);
-            _bugs.unset (id);
-            _chip_bar.remove_chip (id);
-            if (_chip_bar.chip_count == 0) _chip_bar.visible = false;
-            _chip_bar.set_active (null);
-            terminal.grab_focus ();
-        }
-
-        internal Vte.Terminal? take_bug (string id) {
-            var vte = _bugs.get (id);
-            if (vte == null) return null;
-            if (_active_bug == id) {
-                _bug_host.remove (vte);
-                _active_bug = null;
-                if (_split.get_end_child () == _bug_host)
-                    _split.set_end_child (null);
-            }
-            ulong title_handler = _bug_title_handlers.get (id);
-            if (title_handler != 0) vte.disconnect (title_handler);
-            _bug_title_handlers.unset (id);
-            _bugs.unset (id);
-            _chip_bar.remove_chip (id);
-            _chip_bar.visible = _chip_bar.chip_count > 0;
-            _chip_bar.set_active (null);
-            terminal.grab_focus ();
-            return vte;
-        }
-
         public string get_working_dir () {
             string? uri = terminal.get_current_directory_uri ();
             if (uri != null) {
@@ -507,27 +636,13 @@ namespace Singularity.Apps {
             return GLib.Environment.get_home_dir ();
         }
 
-        /** Returns true if this leaf or any of its bug terminals has focus. */
         public bool has_focus () {
-            if (terminal.is_focus ()) return true;
-            if (_active_bug != null) {
-                var bug_vte = _bugs.get (_active_bug);
-                if (bug_vte != null && bug_vte.is_focus ()) return true;
-            }
-            return false;
-        }
-
-        /** Returns the active bug terminal, or null if none is active. */
-        public Vte.Terminal? get_active_bug () {
-            if (_active_bug == null) return null;
-            return _bugs.get (_active_bug);
+            return terminal.is_focus ();
         }
 
         public void redraw_terminals () {
             terminal.queue_resize ();
             terminal.queue_draw ();
-            var b = get_active_bug ();
-            if (b != null) { b.queue_resize (); b.queue_draw (); }
         }
     }
 

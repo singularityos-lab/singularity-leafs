@@ -2,5 +2,6 @@
 <gresources>
   <gresource prefix="/dev/sinty/leafs">
     <file preprocess="xml-stripblanks">ui/main.ui</file>
+    <file alias="icons/leaf-tile-drag-symbolic.svg">resources/icons/leaf-tile-drag-symbolic.svg</file>
   </gresource>
 </gresources>

@@ -1,5 +1,6 @@
 # List of source files containing translatable strings.
 src/app.vala
+src/leaf_cell.vala
 src/leaf_pane.vala
 src/main.vala
 src/ssh_dialog.vala
