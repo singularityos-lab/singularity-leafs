@@ -33,7 +33,10 @@ namespace Singularity.Apps {
             tabs.append (chips);
 
             tabs.page_removed.connect (on_page_removed);
-            tabs.switch_page.connect ((page, page_num) => sync_active_chip ());
+            tabs.switch_page.connect ((page, page_num) => {
+                var leaf = page as LeafPane;
+                chips.set_active (leaf != null ? leaf.pane_id : null);
+            });
         }
 
         public void add_leaf (LeafPane leaf, bool activate = true) {
