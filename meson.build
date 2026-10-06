@@ -50,10 +50,14 @@ executable('singularity-leafs',
     'src/ssh_dialog.vala',
     'src/leaf_pane.vala',
     'src/leaf_cell.vala',
+    'src/leaf_layout.vala',
     'src/bloom.vala',
     'src/bloom_dialog.vala',
     'src/window.vala',
     'src/app.vala',
+    'src/search_provider.vala',
+    'src/cheatsheet.vala',
+    'src/cheatsheet_panel.vala',
     resources,
   ],
   dependencies: [gtk_dep, gee_dep, vte_dep, json_dep, libsingularity_dep,
@@ -61,6 +65,22 @@ executable('singularity-leafs',
   vala_args: ['--pkg=posix'] + develop_vala_args,
   install: true,
   install_rpath: get_option('prefix') / get_option('libdir')
+)
+
+cheatsheet_test = executable('cheatsheet-test',
+  ['tests/cheatsheet_test.vala', 'src/cheatsheet.vala'],
+  dependencies: [dependency('glib-2.0'), dependency('gobject-2.0'), dependency('gio-2.0'), gee_dep],
+)
+test('cheatsheet', cheatsheet_test, args: [meson.current_source_dir() / 'data' / 'cheatsheet' / 'commands.md'])
+
+leaf_layout_test = executable('leaf-layout-test',
+  ['tests/leaf_layout_test.vala', 'src/leaf_layout.vala'],
+  dependencies: [gtk_dep, json_dep, libsingularity_dep],
+)
+test('leaf-layout', leaf_layout_test)
+
+install_data('data/cheatsheet/NOTICE',
+  install_dir: get_option('datadir') / 'doc' / 'singularity-leafs'
 )
 
 desktop_conf = configuration_data()
@@ -72,6 +92,25 @@ configure_file(
   configuration: desktop_conf,
   install: true,
   install_dir: get_option('datadir') / 'applications'
+)
+
+provider_conf = configuration_data()
+provider_conf.set('APP_ID', app_id)
+provider_conf.set('OBJECT_PATH', '/' + app_id.replace('.', '/').replace('-', '_'))
+provider_conf.set('bindir', get_option('prefix') / get_option('bindir'))
+configure_file(
+  input: 'data/leafs.search-provider.ini.in',
+  output: app_id + '.ini',
+  configuration: provider_conf,
+  install: true,
+  install_dir: get_option('datadir') / 'singularity' / 'search-providers'
+)
+configure_file(
+  input: 'data/leafs.service.in',
+  output: app_id + '.service',
+  configuration: provider_conf,
+  install: true,
+  install_dir: get_option('datadir') / 'dbus-1' / 'services'
 )
 
 install_data('data/dev.sinty.leafs.gschema.xml',

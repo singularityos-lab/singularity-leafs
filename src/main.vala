@@ -19,6 +19,7 @@ namespace Singularity.Apps {
         Intl.textdomain("singularity-leafs");
 
         var app = new LeafsApp ();
+        new LeafsSearchProvider (app).export (app);
         return app.run (args);
     }
 

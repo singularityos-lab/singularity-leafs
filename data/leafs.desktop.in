@@ -11,3 +11,8 @@ Categories=System;TerminalEmulator;
 Keywords=terminal;shell;console;leafs;
 StartupNotify=true
 StartupWMClass=@APP_ID@
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=singularity-leafs --new-window

@@ -1,0 +1,25 @@
+Leafs command cheatsheet
+========================
+
+commands.md is an original, curated list of common commands written for
+Leafs. It uses the page format of the tldr-pages project so that both sources
+can be read by the same parser, but it contains no text from tldr-pages. It is
+covered by the licence of Leafs.
+
+For distributors
+----------------
+
+Leafs also reads extra pages at run time from these folders, in each directory
+of XDG_DATA_HOME and XDG_DATA_DIRS:
+
+  singularity-leafs/cheatsheet/*.md   more curated pages, same format
+  tldr/pages/common/*.md              tldr-pages, common commands
+  tldr/pages/linux/*.md               tldr-pages, Linux commands
+
+A distribution that packages tldr-pages (https://github.com/tldr-pages/tldr)
+at /usr/share/tldr/pages gets them in the cheatsheet with no further change.
+tldr-pages content is licensed under the Creative Commons Attribution 4.0
+International licence (CC BY 4.0,
+https://creativecommons.org/licenses/by/4.0/). When any tldr page is loaded,
+the cheatsheet shows the required attribution with links to the project and
+the licence, and a tldr page replaces the curated page of the same name.

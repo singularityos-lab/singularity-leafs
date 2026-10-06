@@ -7,32 +7,6 @@ using Gee;
 
 namespace Singularity.Apps {
 
-    private class LeafLayoutNode : Object {
-        public LeafCell? cell;
-        public Orientation orientation;
-        public LeafLayoutNode? start;
-        public LeafLayoutNode? end;
-
-        public LeafLayoutNode.for_cell (LeafCell cell) {
-            this.cell = cell;
-        }
-
-        public LeafLayoutNode.for_split (Orientation orientation,
-                                         LeafLayoutNode start,
-                                         LeafLayoutNode end) {
-            this.orientation = orientation;
-            this.start = start;
-            this.end = end;
-        }
-
-        public int leaf_count () {
-            if (cell != null) return 1;
-            int start_count = start != null ? start.leaf_count () : 0;
-            int end_count = end != null ? end.leaf_count () : 0;
-            return start_count + end_count;
-        }
-    }
-
     public class LeafsApp : Singularity.Application {
         // Primary window; "flowers" are additional LeafsWindow instances.
         private LeafsWindow main_window;
@@ -42,8 +16,8 @@ namespace Singularity.Apps {
         private HashMap<LeafPane, LeafCell> leaf_cell = new HashMap<LeafPane, LeafCell>();
         private HashMap<LeafsWindow, ArrayList<LeafCell>> window_cells =
             new HashMap<LeafsWindow, ArrayList<LeafCell>> ();
-        private HashMap<LeafsWindow, LeafLayoutNode> window_layout =
-            new HashMap<LeafsWindow, LeafLayoutNode> ();
+        private HashMap<LeafsWindow, Singularity.TileTree> window_layout =
+            new HashMap<LeafsWindow, Singularity.TileTree> ();
         // Extra "flower" windows beyond main_window.
         private ArrayList<LeafsWindow> flowers = new ArrayList<LeafsWindow>();
         private GLib.Settings settings;
@@ -51,7 +25,12 @@ namespace Singularity.Apps {
         private ArrayList<SshSession> ssh_sessions;
         private ArrayList<BloomDef> blooms;
         private uint session_save_source = 0;
+        private SimpleAction? act_copy = null;
+        private SimpleAction? act_detach_leaf = null;
         private bool restoring_session = false;
+        private Cheatsheet? cheatsheet = null;
+        private Singularity.Widgets.FloatingPanel? cheat_panel = null;
+        private LeafPane? cheat_target = null;
 
         private LeafsWindow window_of(LeafPane leaf) {
             return leaf_window.has_key(leaf) ? leaf_window[leaf] : main_window;
@@ -101,8 +80,92 @@ namespace Singularity.Apps {
             string[] argv = cmdline.get_arguments ();
             string[]? cmd = extract_exec_command (argv);
             if (cmd != null) _startup_cmd = cmd;
+            if (cmd == null && "--new-window" in argv && main_window != null) {
+                open_flower (null);
+                return 0;
+            }
             activate ();
             return 0;
+        }
+
+        public bool menu_in_window { get; private set; default = false; }
+
+        private void track_global_menu () {
+            Singularity.Widgets.AppMenu.get_default ().notify["global-menu-in-use"].connect (() => update_menu_in_window ());
+            notify["menubar"].connect (() => update_menu_in_window ());
+            update_menu_in_window ();
+        }
+
+        private void update_menu_in_window () {
+            bool wanted = menubar != null && !Singularity.Widgets.AppMenu.get_default ().global_menu_in_use;
+            if (menu_in_window != wanted) menu_in_window = wanted;
+        }
+
+        private void show_app_menu (Gtk.Button anchor) {
+            Singularity.Widgets.AppMenu.popup (this, anchor);
+        }
+
+        public SshSession[] saved_ssh_sessions () {
+            SshSession[] result = {};
+            foreach (var js in settings.get_strv ("ssh-sessions")) {
+                var s = SshSession.from_json (js);
+                if (s != null) result += s;
+            }
+            return result;
+        }
+
+        public void open_ssh_target (string target) {
+            activate ();
+            if (target.has_prefix ("session:")) {
+                string id = target.substring (8);
+                foreach (var s in saved_ssh_sessions ()) {
+                    if (s.id == id) {
+                        connect_ssh (s);
+                        return;
+                    }
+                }
+            } else if (target.has_prefix ("host:")) {
+                insert_leaf_after (get_focused_leaf (), null, null, { "ssh", target.substring (5) });
+            }
+        }
+
+        private Singularity.DockMenu? dock_menu = null;
+
+        private void update_dock_menu () {
+            if (dock_menu == null) {
+                dock_menu = new Singularity.DockMenu (application_id);
+                dock_menu.activated.connect (on_dock_menu_item);
+            }
+            dock_menu.clear ();
+            int shown = 0;
+            foreach (var s in ssh_sessions) {
+                if (shown >= 6) break;
+                dock_menu.add_item ("session:" + s.id, s.name != "" ? s.name : s.host, "network-server-symbolic");
+                shown++;
+            }
+            if (!blooms.is_empty && shown > 0) dock_menu.add_separator ();
+            for (int i = 0; i < blooms.size && i < 6; i++) {
+                dock_menu.add_item ("bloom:%d".printf (i), blooms[i].label != "" ? blooms[i].label : blooms[i].command,
+                                    "utilities-terminal-symbolic");
+                shown++;
+            }
+            if (shown == 0) {
+                dock_menu.unpublish ();
+                return;
+            }
+            dock_menu.publish ();
+        }
+
+        private void on_dock_menu_item (string item) {
+            if (main_window == null) return;
+            main_window.present ();
+            if (item.has_prefix ("session:")) {
+                open_ssh_target (item);
+            } else if (item.has_prefix ("bloom:")) {
+                int index = int.parse (item.substring (6));
+                if (index >= 0 && index < blooms.size)
+                    spawn_bloom (blooms[index].label, blooms[index].command);
+            }
         }
 
         private void add_leaf_cmd (string[] cmd) {
@@ -115,9 +178,49 @@ namespace Singularity.Apps {
 
             var menu = new GLib.Menu ();
             var file_menu = new GLib.Menu ();
-            file_menu.append ("Settings", "app.settings");
-            file_menu.append ("Quit", "app.quit");
-            menu.append_submenu ("File", file_menu);
+            var f1 = new GLib.Menu ();
+            f1.append (_("New Leaf"), "app.new-leaf");
+            f1.append (_("New Tab"), "app.new-tab");
+            f1.append (_("New Flower"), "app.new-flower");
+            f1.append (_("New Bloom"), "app.new-bloom");
+            file_menu.append_section (null, f1);
+            var f2 = new GLib.Menu ();
+            f2.append (_("Detach Leaf to Flower"), "app.detach-leaf");
+            f2.append (_("Close Leaf"), "app.close-leaf");
+            file_menu.append_section (null, f2);
+            var f3 = new GLib.Menu ();
+            f3.append (_("Close Window"), "win.close");
+            f3.append (_("Quit"), "app.quit");
+            file_menu.append_section (null, f3);
+            menu.append_submenu (_("File"), file_menu);
+
+            var edit_menu = new GLib.Menu ();
+            var e1 = new GLib.Menu ();
+            e1.append (_("Copy"), "app.copy");
+            e1.append (_("Paste"), "app.paste");
+            e1.append (_("Select All"), "app.select-all");
+            edit_menu.append_section (null, e1);
+            var e2 = new GLib.Menu ();
+            e2.append (_("Clear"), "app.clear");
+            edit_menu.append_section (null, e2);
+            var e3 = new GLib.Menu ();
+            e3.append (_("Settings"), "app.settings");
+            edit_menu.append_section (null, e3);
+            menu.append_submenu (_("Edit"), edit_menu);
+
+            var view_menu = new GLib.Menu ();
+            var v1 = new GLib.Menu ();
+            v1.append (_("Zoom In"), "app.zoom-in");
+            v1.append (_("Zoom Out"), "app.zoom-out");
+            v1.append (_("Actual Size"), "app.zoom-reset");
+            view_menu.append_section (null, v1);
+            var v2 = new GLib.Menu ();
+            v2.append (_("Fullscreen"), "win.fullscreen");
+            view_menu.append_section (null, v2);
+            var v3 = new GLib.Menu ();
+            v3.append (_("Command Cheatsheet"), "app.cheatsheet");
+            view_menu.append_section (null, v3);
+            menu.append_submenu (_("View"), view_menu);
             set_menubar (menu);
 
             var act_settings = new SimpleAction ("settings", null);
@@ -131,6 +234,86 @@ namespace Singularity.Apps {
             var act_new_tab = new SimpleAction ("new-tab", null);
             act_new_tab.activate.connect (() => add_tab_after_focused ());
             add_action (act_new_tab);
+
+            var act_new_flower = new SimpleAction ("new-flower", null);
+            act_new_flower.activate.connect (() => open_flower (null));
+            add_action (act_new_flower);
+
+            var act_new_bloom = new SimpleAction ("new-bloom", null);
+            act_new_bloom.activate.connect (() => spawn_bloom ("", ""));
+            add_action (act_new_bloom);
+
+            act_detach_leaf = new SimpleAction ("detach-leaf", null);
+            act_detach_leaf.activate.connect (() => {
+                var leaf = get_focused_leaf ();
+                if (leaf != null) detach_leaf_to_flower (leaf);
+            });
+            add_action (act_detach_leaf);
+
+            var act_close_leaf = new SimpleAction ("close-leaf", null);
+            act_close_leaf.activate.connect (() => {
+                var leaf = get_focused_leaf ();
+                if (leaf != null) on_close_leaf (leaf);
+            });
+            add_action (act_close_leaf);
+
+            act_copy = new SimpleAction ("copy", null);
+            act_copy.set_enabled (false);
+            act_copy.activate.connect (() => {
+                var t = get_focused_terminal ();
+                if (t != null && t.get_has_selection ()) t.copy_clipboard_format (Vte.Format.TEXT);
+            });
+            add_action (act_copy);
+
+            var act_paste = new SimpleAction ("paste", null);
+            act_paste.activate.connect (() => {
+                var t = get_focused_terminal ();
+                if (t != null) LeafPane.smart_paste (t);
+            });
+            add_action (act_paste);
+
+            var act_select_all = new SimpleAction ("select-all", null);
+            act_select_all.activate.connect (() => {
+                var t = get_focused_terminal ();
+                if (t != null) t.select_all ();
+            });
+            add_action (act_select_all);
+
+            var act_clear = new SimpleAction ("clear", null);
+            act_clear.activate.connect (() => {
+                var t = get_focused_terminal ();
+                if (t != null) t.reset (true, true);
+            });
+            add_action (act_clear);
+
+            var act_zoom_in = new SimpleAction ("zoom-in", null);
+            act_zoom_in.activate.connect (() => settings.set_int ("font-size", int.min (72, settings.get_int ("font-size") + 1)));
+            add_action (act_zoom_in);
+
+            var act_zoom_out = new SimpleAction ("zoom-out", null);
+            act_zoom_out.activate.connect (() => settings.set_int ("font-size", int.max (6, settings.get_int ("font-size") - 1)));
+            add_action (act_zoom_out);
+
+            var act_zoom_reset = new SimpleAction ("zoom-reset", null);
+            act_zoom_reset.activate.connect (() => settings.reset ("font-size"));
+            add_action (act_zoom_reset);
+
+            set_accels_for_action ("app.new-leaf", { "<Control><Shift>n" });
+            set_accels_for_action ("app.new-tab", { "<Control><Shift>t" });
+            set_accels_for_action ("app.new-bloom", { "<Control><Shift>b" });
+            set_accels_for_action ("app.copy", { "<Control><Shift>c" });
+            set_accels_for_action ("app.paste", { "<Control><Shift>v" });
+            set_accels_for_action ("app.settings", { "<Control>comma" });
+            set_accels_for_action ("app.zoom-in", { "<Control>plus", "<Control>equal" });
+            set_accels_for_action ("app.zoom-out", { "<Control>minus" });
+            set_accels_for_action ("app.zoom-reset", { "<Control>0" });
+            set_accels_for_action ("win.close", { "<Control><Shift>w" });
+            set_accels_for_action ("win.fullscreen", { "F11" });
+
+            var act_cheatsheet = new SimpleAction ("cheatsheet", null);
+            act_cheatsheet.activate.connect (() => toggle_cheatsheet ());
+            add_action (act_cheatsheet);
+            set_accels_for_action ("app.cheatsheet", { "<Control><Shift>h" });
 
             var act_quit = new SimpleAction ("quit", null);
             act_quit.activate.connect (() => quit ());
@@ -175,6 +358,7 @@ namespace Singularity.Apps {
                         apply_settings_to_all ();
                 });
             }
+            track_global_menu ();
             Singularity.Style.ThemeMode.get_default ().changed.connect (() => {
                 sync_window_chrome ();
                 if (settings.get_string ("color-scheme") == "auto")
@@ -203,6 +387,7 @@ namespace Singularity.Apps {
             build_window ();
             load_ssh_sessions ();
             load_blooms ();
+            update_dock_menu ();
             if (_startup_cmd != null) {
                 // Launched as a terminal for a specific command: skip session
                 // restore and open just that command.
@@ -212,6 +397,7 @@ namespace Singularity.Apps {
                 restore_session ();
                 if (leaves.is_empty) add_leaf (null, null);
             }
+            update_edit_actions ();
             main_window.present ();
         }
 
@@ -220,7 +406,7 @@ namespace Singularity.Apps {
                 GLib.Source.remove (session_save_source);
                 session_save_source = 0;
             }
-            save_session ();
+            if (main_window != null) save_session ();
             if (leaves != null) {
                 foreach (var leaf in leaves)
                     leaf.prepare_close ();
@@ -270,6 +456,9 @@ namespace Singularity.Apps {
                         return false;
                     case Gdk.Key.b:
                         spawn_bloom ("", "");
+                        return true;
+                    case Gdk.Key.h:
+                        toggle_cheatsheet ();
                         return true;
                 }
             }
@@ -360,12 +549,22 @@ namespace Singularity.Apps {
             leaf.settings_requested.connect (show_settings);
             leaf.ssh_btn.clicked.connect (() => show_ssh_popover (leaf.ssh_btn));
             leaf.bloom_btn.clicked.connect (() => show_bloom_popover (leaf.bloom_btn));
+            bind_property ("menu-in-window", leaf.menu_btn, "visible", BindingFlags.SYNC_CREATE);
+            leaf.menu_btn.clicked.connect (() => show_app_menu (leaf.menu_btn));
             leaf.close_all_requested.connect (() => {
                 save_session ();
                 close_all_windows ();
             });
             leaf.tile_drop_requested.connect (on_tile_drop);
             leaf.state_changed.connect (queue_save_session);
+            leaf.terminal.selection_changed.connect (update_edit_actions);
+            leaf.terminal.notify["has-focus"].connect (update_edit_actions);
+        }
+
+        private void update_edit_actions () {
+            var t = get_focused_terminal ();
+            if (act_copy != null) act_copy.set_enabled (t != null && t.get_has_selection ());
+            if (act_detach_leaf != null) act_detach_leaf.set_enabled (leaves != null && leaves.size > 1);
         }
 
         private void close_all_windows () {
@@ -437,7 +636,7 @@ namespace Singularity.Apps {
         }
 
         private void on_tile_drop (string source_id, LeafPane target,
-                                   LeafDropZone zone) {
+                                   Singularity.TileZone zone) {
             var source = leaf_by_id (source_id);
             if (source == null || source == target) return;
 
@@ -447,7 +646,7 @@ namespace Singularity.Apps {
 
             var src_cell = leaf_cell[source];
             var dst_cell = leaf_cell[target];
-            if (src_cell == dst_cell && zone == LeafDropZone.CENTER) {
+            if (src_cell == dst_cell && zone == Singularity.TileZone.CENTER) {
                 src_cell.tabs.notebook.set_current_page (
                     src_cell.tabs.notebook.page_num (source));
                 source.terminal.grab_focus ();
@@ -466,13 +665,13 @@ namespace Singularity.Apps {
 
             leaves.remove (source);
             int target_index = leaves.index_of (target);
-            bool before = zone == LeafDropZone.LEFT || zone == LeafDropZone.TOP;
+            bool before = zone.is_before ();
             int leaf_index = target_index < 0
                 ? leaves.size
                 : target_index + (before ? 0 : 1);
             leaves.insert (leaf_index.clamp (0, leaves.size), source);
 
-            if (zone == LeafDropZone.CENTER) {
+            if (zone == Singularity.TileZone.CENTER) {
                 dst_cell.add_leaf (source);
                 leaf_cell[source] = dst_cell;
             } else {
@@ -580,6 +779,7 @@ namespace Singularity.Apps {
             for (int i = 0; i < blooms.size; i++)
                 arr[i] = blooms[i].to_json ();
             settings.set_strv ("blooms", arr);
+            update_dock_menu ();
         }
 
         private void show_bloom_dialog (BloomDef? existing) {
@@ -617,6 +817,7 @@ namespace Singularity.Apps {
             title_lbl.xalign  = 0;
 
             var add_btn = new Gtk.Button.from_icon_name ("list-add-symbolic");
+            add_btn.tooltip_text = _("New Bloom");
             add_btn.add_css_class ("flat");
             add_btn.valign = Gtk.Align.CENTER;
             add_btn.clicked.connect (() => {
@@ -738,6 +939,56 @@ namespace Singularity.Apps {
             return leaves.size > 0 ? leaves.last () : null;
         }
 
+        private void toggle_cheatsheet () {
+            if (cheat_panel != null && cheat_panel.get_parent () != null) {
+                close_cheatsheet ();
+                return;
+            }
+            if (main_window == null) return;
+            cheat_target = get_focused_leaf ();
+            if (cheatsheet == null) {
+                cheatsheet = new Cheatsheet ();
+                cheatsheet.load_default ();
+            }
+            var win = cheat_target != null ? window_of (cheat_target) : main_window;
+            var overlay = win.bloom_overlay;
+            var panel = new Singularity.Widgets.FloatingPanel (overlay);
+            panel.title = _("Cheatsheet");
+            panel.add_css_class ("leafs-cheat-panel");
+            var content = new CheatsheetPanel (cheatsheet);
+            content.insert_requested.connect (insert_command);
+            content.close_requested.connect (() => close_cheatsheet ());
+            panel.close_requested.connect (() => {
+                cheat_panel = null;
+                focus_cheat_target ();
+            });
+            panel.set_content (content);
+            int width = int.min (380, int.max (260, overlay.get_width () - 24));
+            int height = int.min (560, int.max (280, overlay.get_height () - 24));
+            panel.set_panel_size (width, height);
+            panel.place (int.max (0, overlay.get_width () - width - 12), 12);
+            cheat_panel = panel;
+            content.focus_search ();
+        }
+
+        private void close_cheatsheet () {
+            if (cheat_panel != null) cheat_panel.dismiss ();
+            cheat_panel = null;
+            focus_cheat_target ();
+        }
+
+        private void focus_cheat_target () {
+            var leaf = cheat_target != null && leaves.contains (cheat_target) ? cheat_target : get_focused_leaf ();
+            if (leaf != null) leaf.terminal.grab_focus ();
+        }
+
+        private void insert_command (string text) {
+            var leaf = cheat_target != null && leaves.contains (cheat_target) ? cheat_target : get_focused_leaf ();
+            if (leaf == null) return;
+            leaf.terminal.feed_child (text.data);
+            leaf.terminal.grab_focus ();
+        }
+
         private Vte.Terminal? get_focused_terminal () {
             var leaf = get_focused_leaf ();
             return leaf != null ? leaf.terminal : null;
@@ -755,9 +1006,9 @@ namespace Singularity.Apps {
                 return;
             }
 
-            var root = ensure_window_layout (win);
-            if (root != null)
-                win.leaves_box.append (build_tiled_widget (root));
+            var tree = ensure_window_layout (win);
+            if (tree != null && tree.root != null)
+                win.leaves_box.append (build_tiled_widget (win, tree.root));
 
             foreach (var cell in cells)
                 foreach (var leaf in cell.leaves)
@@ -782,44 +1033,41 @@ namespace Singularity.Apps {
             cell.tabs.unparent ();
         }
 
-        private LeafLayoutNode? ensure_window_layout (LeafsWindow win) {
+        private string[] cell_ids (LeafsWindow win) {
+            string[] ids = {};
+            if (!window_cells.has_key (win)) return ids;
+            foreach (var cell in window_cells[win])
+                ids += cell.cell_id;
+            return ids;
+        }
+
+        private LeafCell? cell_by_id (LeafsWindow win, string id) {
+            if (!window_cells.has_key (win)) return null;
+            foreach (var cell in window_cells[win])
+                if (cell.cell_id == id) return cell;
+            return null;
+        }
+
+        private Singularity.TileTree? ensure_window_layout (LeafsWindow win) {
             if (window_layout.has_key (win))
                 return window_layout[win];
-            var cells = window_cells[win];
-            if (cells.is_empty) return null;
-            Orientation orientation = win.leaves_box.get_height () > win.leaves_box.get_width ()
-                ? Orientation.VERTICAL
-                : Orientation.HORIZONTAL;
-            var root = build_balanced_layout (cells, 0, cells.size, orientation);
-            window_layout[win] = root;
-            return root;
+            var tree = LeafLayout.rebalanced (cell_ids (win),
+                win.leaves_box.get_width (), win.leaves_box.get_height ());
+            if (tree == null) return null;
+            window_layout[win] = tree;
+            return tree;
         }
 
-        private LeafLayoutNode build_balanced_layout (ArrayList<LeafCell> cells,
-                                                       int first, int count,
-                                                       Orientation orientation) {
-            if (count == 1)
-                return new LeafLayoutNode.for_cell (cells[first]);
-
-            int first_count = count / 2;
-            int second_count = count - first_count;
-            Orientation next = orientation == Orientation.HORIZONTAL
-                ? Orientation.VERTICAL
-                : Orientation.HORIZONTAL;
-            return new LeafLayoutNode.for_split (
-                orientation,
-                build_balanced_layout (cells, first, first_count, next),
-                build_balanced_layout (cells, first + first_count, second_count, next));
-        }
-
-        private Gtk.Widget build_tiled_widget (LeafLayoutNode node) {
-            if (node.cell != null)
-                return node.cell.tabs;
+        private Gtk.Widget build_tiled_widget (LeafsWindow win, Singularity.TileNode node) {
+            if (node.tile != null) {
+                var cell = cell_by_id (win, node.tile);
+                return cell != null ? cell.tabs : new Gtk.Box (Orientation.VERTICAL, 0);
+            }
 
             var start = node.start;
             var end = node.end;
             if (start == null || end == null)
-                return start != null ? build_tiled_widget (start) : build_tiled_widget (end);
+                return start != null ? build_tiled_widget (win, start) : build_tiled_widget (win, end);
 
             var paned = new Gtk.Paned (node.orientation);
             paned.add_css_class ("leaf-paned");
@@ -827,12 +1075,13 @@ namespace Singularity.Apps {
             paned.resize_end_child = true;
             paned.shrink_start_child = false;
             paned.shrink_end_child = false;
-            paned.set_start_child (build_tiled_widget (start));
-            paned.set_end_child (build_tiled_widget (end));
+            paned.set_start_child (build_tiled_widget (win, start));
+            paned.set_end_child (build_tiled_widget (win, end));
 
-            double ratio = (double) start.leaf_count () / (double) node.leaf_count ();
+            double ratio = LeafLayout.position_ratio (node);
+            var orientation = node.orientation;
             GLib.Idle.add (() => {
-                int span = node.orientation == Orientation.HORIZONTAL
+                int span = orientation == Orientation.HORIZONTAL
                     ? paned.get_width ()
                     : paned.get_height ();
                 if (span > 1)
@@ -843,143 +1092,29 @@ namespace Singularity.Apps {
         }
 
         private void remove_layout_cell (LeafsWindow win, LeafCell cell) {
-            var root = ensure_window_layout (win);
-            if (root == null) return;
-            bool removed;
-            var updated = remove_layout_cell_from (root, cell, out removed);
-            if (!removed) return;
-            if (updated == null)
+            var tree = ensure_window_layout (win);
+            if (tree == null) return;
+            if (!tree.remove (cell.cell_id)) return;
+            if (tree.is_empty)
                 window_layout.unset (win);
-            else
-                window_layout[win] = updated;
-        }
-
-        private LeafLayoutNode? remove_layout_cell_from (LeafLayoutNode node,
-                                                         LeafCell cell,
-                                                         out bool removed) {
-            if (node.cell != null) {
-                removed = node.cell == cell;
-                return removed ? null : node;
-            }
-
-            bool child_removed;
-            if (node.start != null) {
-                var start = remove_layout_cell_from (node.start, cell, out child_removed);
-                if (child_removed) {
-                    removed = true;
-                    if (start == null) return node.end;
-                    node.start = start;
-                    return node;
-                }
-            }
-            if (node.end != null) {
-                var end = remove_layout_cell_from (node.end, cell, out child_removed);
-                if (child_removed) {
-                    removed = true;
-                    if (end == null) return node.start;
-                    node.end = end;
-                    return node;
-                }
-            }
-            removed = false;
-            return node;
         }
 
         private void insert_layout_cell (LeafsWindow win, LeafCell target,
-                                         LeafCell inserted, LeafDropZone zone) {
-            var root = ensure_window_layout (win);
-            if (root == null) {
-                window_layout[win] = new LeafLayoutNode.for_cell (inserted);
-                return;
-            }
-
-            Orientation orientation = zone == LeafDropZone.LEFT || zone == LeafDropZone.RIGHT
-                ? Orientation.HORIZONTAL
-                : Orientation.VERTICAL;
-            bool before = zone == LeafDropZone.LEFT || zone == LeafDropZone.TOP;
-            var target_node = new LeafLayoutNode.for_cell (target);
-            var inserted_node = new LeafLayoutNode.for_cell (inserted);
-            var split = new LeafLayoutNode.for_split (
-                orientation,
-                before ? inserted_node : target_node,
-                before ? target_node : inserted_node);
-            bool replaced;
-            var updated = replace_layout_cell (root, target, split, out replaced);
-            window_layout[win] = replaced ? updated : build_balanced_layout (
-                window_cells[win], 0, window_cells[win].size, orientation);
+                                         LeafCell inserted, Singularity.TileZone zone) {
+            var tree = ensure_window_layout (win);
+            window_layout[win] = LeafLayout.place (tree, cell_ids (win),
+                target.cell_id, inserted.cell_id, zone);
         }
-
-        private LeafLayoutNode replace_layout_cell (LeafLayoutNode node,
-                                                    LeafCell target,
-                                                    LeafLayoutNode replacement,
-                                                    out bool replaced) {
-            if (node.cell != null) {
-                replaced = node.cell == target;
-                return replaced ? replacement : node;
-            }
-
-            if (node.start != null) {
-                node.start = replace_layout_cell (
-                    node.start, target, replacement, out replaced);
-                if (replaced) return node;
-            }
-            if (node.end != null) {
-                node.end = replace_layout_cell (
-                    node.end, target, replacement, out replaced);
-                if (replaced) return node;
-            }
-            replaced = false;
-            return node;
-        }
-
-        private Singularity.Widgets.PreferencesWindow? prefs_win = null;
 
         private void show_settings () {
-            if (Singularity.Runtime.is_shell_running ()) {
-                try {
-                    Singularity.Shell.ShellService shell = Bus.get_proxy_sync (
-                        BusType.SESSION, "dev.sinty.desktop", "/dev/sinty/Shell");
-                    shell.open_app_settings ("dev.sinty.leafs");
-                    return;
-                } catch (Error e) {
-                    warning ("Leafs: failed to open shell settings: %s", e.message);
-                }
+            try {
+                Singularity.Shell.ShellService shell = Bus.get_proxy_sync (
+                    BusType.SESSION, "dev.sinty.desktop", "/dev/sinty/Shell");
+                shell.open_app_settings ("dev.sinty.leafs");
+            } catch (Error e) {
+                warning ("Leafs: failed to open shell settings: %s", e.message);
             }
-            show_local_settings ();
         }
-
-        private void show_local_settings () {
-            if (prefs_win != null) { prefs_win.present (); return; }
-
-            var page = new Singularity.Widgets.PreferencesPage ();
-            var group = new Singularity.Widgets.PreferencesGroup (_("Terminal"));
-
-            var themes = Singularity.Core.TerminalThemes.get_all ();
-            string[] names = {};
-            foreach (var t in themes) names += t.name;
-            string current = settings.get_string ("color-scheme");
-            string current_name = "";
-            foreach (var t in themes)
-                if (t.id == current) current_name = t.name;
-
-            var theme_row = new Singularity.Widgets.SelectionRow (_("Theme"), names, current_name);
-            theme_row.selected.connect ((item) => {
-                foreach (var t in themes) {
-                    if (t.name == item) {
-                        if (settings.get_string ("color-scheme") != t.id)
-                            settings.set_string ("color-scheme", t.id);
-                        break;
-                    }
-                }
-            });
-            group.add_row (theme_row);
-            page.append_group (group);
-
-            prefs_win = new Singularity.Widgets.PreferencesWindow (this, page, false);
-            prefs_win.close_request.connect (() => { prefs_win = null; return false; });
-            prefs_win.present ();
-        }
-
 
         private bool terminal_is_dark () {
             string scheme = settings.get_string ("color-scheme");
@@ -1020,6 +1155,7 @@ namespace Singularity.Apps {
         }
 
         private void save_session () {
+            update_edit_actions ();
             if (leaves == null || main_window == null) return;
             foreach (var leaf in leaves)
                 leaf.persist_state ();
@@ -1067,28 +1203,9 @@ namespace Singularity.Apps {
             }
             builder.end_array ();
             var layout = ensure_window_layout (win);
-            if (layout != null) {
+            if (layout != null && layout.root != null) {
                 builder.set_member_name ("layout");
-                append_layout_session (builder, layout, window_cells[win]);
-            }
-            builder.end_object ();
-        }
-
-        private void append_layout_session (Json.Builder builder, LeafLayoutNode node,
-                                            ArrayList<LeafCell> cells) {
-            builder.begin_object ();
-            if (node.cell != null) {
-                builder.set_member_name ("cell");
-                builder.add_int_value (cells.index_of (node.cell));
-            } else {
-                builder.set_member_name ("orientation");
-                builder.add_string_value (node.orientation == Orientation.HORIZONTAL
-                    ? "horizontal"
-                    : "vertical");
-                builder.set_member_name ("start");
-                append_layout_session (builder, node.start, cells);
-                builder.set_member_name ("end");
-                append_layout_session (builder, node.end, cells);
+                LeafLayout.write (builder, layout.root, cell_ids (win));
             }
             builder.end_object ();
         }
@@ -1167,60 +1284,15 @@ namespace Singularity.Apps {
                         active.clamp (0, cell.leaves.size - 1));
                 }
                 if (saved_window.has_member ("layout")) {
-                    var layout = restore_layout_session (
-                        saved_window.get_object_member ("layout"), window_cells[win]);
-                    if (layout != null && layout_matches_cells (layout, window_cells[win]))
+                    var layout = LeafLayout.read (
+                        saved_window.get_object_member ("layout"), cell_ids (win));
+                    if (layout != null)
                         window_layout[win] = layout;
                 }
                 rebuild_separators_in (win);
                 if (win != main_window)
                     win.present ();
             }
-        }
-
-        private LeafLayoutNode? restore_layout_session (Json.Object? saved,
-                                                        ArrayList<LeafCell> cells) {
-            if (saved == null) return null;
-            if (saved.has_member ("cell")) {
-                int index = (int) saved.get_int_member ("cell");
-                return index >= 0 && index < cells.size
-                    ? new LeafLayoutNode.for_cell (cells[index])
-                    : null;
-            }
-            if (!saved.has_member ("orientation") ||
-                !saved.has_member ("start") || !saved.has_member ("end"))
-                return null;
-
-            string orientation = saved.get_string_member ("orientation");
-            if (orientation != "horizontal" && orientation != "vertical")
-                return null;
-            var start = restore_layout_session (
-                saved.get_object_member ("start"), cells);
-            var end = restore_layout_session (
-                saved.get_object_member ("end"), cells);
-            if (start == null || end == null) return null;
-            return new LeafLayoutNode.for_split (
-                orientation == "horizontal" ? Orientation.HORIZONTAL : Orientation.VERTICAL,
-                start, end);
-        }
-
-        private bool layout_matches_cells (LeafLayoutNode layout,
-                                           ArrayList<LeafCell> cells) {
-            var found = new HashSet<LeafCell> ();
-            if (!collect_layout_cells (layout, found) || found.size != cells.size)
-                return false;
-            foreach (var cell in cells)
-                if (!found.contains (cell)) return false;
-            return true;
-        }
-
-        private bool collect_layout_cells (LeafLayoutNode node,
-                                           HashSet<LeafCell> found) {
-            if (node.cell != null)
-                return found.add (node.cell);
-            return node.start != null && node.end != null
-                && collect_layout_cells (node.start, found)
-                && collect_layout_cells (node.end, found);
         }
 
         private void restore_leaf (Json.Object saved, LeafsWindow win, LeafCell cell) {
@@ -1254,6 +1326,7 @@ namespace Singularity.Apps {
             for (int i = 0; i < ssh_sessions.size; i++)
                 arr[i] = ssh_sessions[i].to_json ();
             settings.set_strv ("ssh-sessions", arr);
+            update_dock_menu ();
         }
 
         private void connect_ssh (SshSession session) {
@@ -1306,6 +1379,7 @@ namespace Singularity.Apps {
             title_lbl.xalign  = 0;
 
             var add_btn = new Gtk.Button.from_icon_name ("list-add-symbolic");
+            add_btn.tooltip_text = _("New SSH Session");
             add_btn.add_css_class ("flat");
             add_btn.valign = Gtk.Align.CENTER;
             add_btn.clicked.connect (() => {
@@ -1413,6 +1487,25 @@ namespace Singularity.Apps {
         }
 
         private const string LEAFS_CSS = """
+            .leafs-cheat-list {
+                background: transparent;
+            }
+            .leafs-cheat-list row {
+                border-radius: 10px;
+            }
+            .leafs-cheat-code {
+                font-family: monospace;
+            }
+            .leafs-cheat-name {
+                font-family: monospace;
+            }
+            .leafs-cheat-keys {
+                font-family: monospace;
+                font-size: 0.9em;
+                padding: 2px 8px;
+                border-radius: 6px;
+                background-color: alpha(currentColor, 0.1);
+            }
             .leafs-window .singularity-app-frame {
                 background-color: #1a1a1a;
             }

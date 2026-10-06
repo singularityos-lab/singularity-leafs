@@ -63,6 +63,7 @@ namespace Singularity.Apps {
             var cancel_btn = new Button.with_label (_("Cancel"));
             cancel_btn.add_css_class ("flat");
             cancel_btn.clicked.connect (() => close ());
+            set_cancel_button (cancel_btn);
 
             var save_btn = new Button.with_label (_("Save"));
             save_btn.add_css_class ("suggested-action");

@@ -1,0 +1,5 @@
+[Search Provider]
+DesktopId=@APP_ID@.desktop
+BusName=@APP_ID@
+ObjectPath=@OBJECT_PATH@/SearchProvider
+Version=1

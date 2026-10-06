@@ -6,6 +6,14 @@
 
 A terminal emulator for the [Singularity Desktop Environment](https://github.com/singularityos-lab).
 
+## Command cheatsheet
+
+View, Command Cheatsheet (Ctrl+Shift+H) opens a searchable panel with common commands and the keyboard shortcuts of Leafs and of the command line. Click a command, or press Enter on the first result, to type it into the terminal without running it; words in italics are placeholders to replace.
+
+### For distributors
+
+The bundled list in `data/cheatsheet/commands.md` is written for Leafs. More pages in the same format are read from `singularity-leafs/cheatsheet/`, `tldr/pages/common/` and `tldr/pages/linux/` in each data directory (`XDG_DATA_HOME` and `XDG_DATA_DIRS`). Packaging [tldr-pages](https://github.com/tldr-pages/tldr) at `/usr/share/tldr/pages` adds them with no other change; the panel then shows the CC BY 4.0 attribution the licence requires. See [data/cheatsheet/NOTICE](data/cheatsheet/NOTICE).
+
 ## Requirements
 
 - [Meson](https://mesonbuild.com/) ≥ 1.0

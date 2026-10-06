@@ -7,14 +7,6 @@ using Gee;
 
 namespace Singularity.Apps {
 
-    public enum LeafDropZone {
-        LEFT,
-        RIGHT,
-        TOP,
-        BOTTOM,
-        CENTER
-    }
-
     private class LeafDragPayload : Object {
         public string id;
 
@@ -29,6 +21,7 @@ namespace Singularity.Apps {
         public  string      pane_id;
         public  Gtk.Button  ssh_btn;
         public  Gtk.Button  bloom_btn;
+        public  Gtk.Button  menu_btn;
         public int shell_pid = 0;
         public string? ssh_host = null;
 
@@ -50,7 +43,7 @@ namespace Singularity.Apps {
 
         private GLib.Settings _settings;
         private Gtk.DrawingArea _tile_drop_overlay;
-        private LeafDropZone _tile_drop_zone = LeafDropZone.CENTER;
+        private Singularity.TileZone _tile_drop_zone = Singularity.TileZone.CENTER;
 
         public signal void close_requested     (LeafPane pane);
         public signal void add_requested       (LeafPane pane);
@@ -60,7 +53,7 @@ namespace Singularity.Apps {
         public signal void settings_requested  ();
         public signal void close_all_requested ();
         public signal void tile_drop_requested  (string source_id, LeafPane target,
-                                                 LeafDropZone zone);
+                                                 Singularity.TileZone zone);
         public signal void state_changed        ();
 
         public LeafPane (GLib.Settings settings, string? cwd = null, string? id = null,
@@ -213,6 +206,11 @@ namespace Singularity.Apps {
             bloom_btn.tooltip_text = _("Blooms");
             hover_controls.add_control (bloom_btn);
 
+            menu_btn = new Button.from_icon_name ("open-menu-symbolic");
+            menu_btn.tooltip_text = _("App Menu");
+            menu_btn.visible = false;
+            hover_controls.add_control (menu_btn);
+
             var settings_btn = new Button.from_icon_name ("emblem-system-symbolic");
             settings_btn.tooltip_text = _("Settings");
             settings_btn.clicked.connect (() => settings_requested ());
@@ -269,27 +267,8 @@ namespace Singularity.Apps {
             _install_context_menu (terminal);
         }
 
-        private LeafDropZone drop_zone_at (double x, double y) {
-            double width = double.max (1.0, get_width ());
-            double height = double.max (1.0, get_height ());
-            double nx = x / width;
-            double ny = y / height;
-            if (nx >= 0.25 && nx <= 0.75 && ny >= 0.25 && ny <= 0.75)
-                return LeafDropZone.CENTER;
-
-            double edge = nx;
-            LeafDropZone zone = LeafDropZone.LEFT;
-            if (1.0 - nx < edge) {
-                edge = 1.0 - nx;
-                zone = LeafDropZone.RIGHT;
-            }
-            if (ny < edge) {
-                edge = ny;
-                zone = LeafDropZone.TOP;
-            }
-            if (1.0 - ny < edge)
-                zone = LeafDropZone.BOTTOM;
-            return zone;
+        private Singularity.TileZone drop_zone_at (double x, double y) {
+            return Singularity.TileZone.at (x, y, get_width (), get_height ());
         }
 
         private void draw_tile_drop_zone (Gtk.DrawingArea area, Cairo.Context cr,
@@ -299,21 +278,21 @@ namespace Singularity.Apps {
             double w = width;
             double h = height;
             switch (_tile_drop_zone) {
-                case LeafDropZone.LEFT:
+                case Singularity.TileZone.LEFT:
                     w /= 2;
                     break;
-                case LeafDropZone.RIGHT:
+                case Singularity.TileZone.RIGHT:
                     x = width / 2.0;
                     w /= 2;
                     break;
-                case LeafDropZone.TOP:
+                case Singularity.TileZone.TOP:
                     h /= 2;
                     break;
-                case LeafDropZone.BOTTOM:
+                case Singularity.TileZone.BOTTOM:
                     y = height / 2.0;
                     h /= 2;
                     break;
-                case LeafDropZone.CENTER:
+                case Singularity.TileZone.CENTER:
                     x = width * 0.2;
                     y = height * 0.2;
                     w = width * 0.6;

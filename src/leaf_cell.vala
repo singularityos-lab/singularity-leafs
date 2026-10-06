@@ -6,6 +6,7 @@ namespace Singularity.Apps {
     public class LeafCell : Object {
         public Singularity.Widgets.TabContainer tabs { get; private set; }
         public ArrayList<LeafPane> leaves { get; private set; }
+        public string cell_id { get; private set; }
 
         private Singularity.Widgets.ChipBar chips;
         private HashMap<LeafPane, ulong> title_handlers;
@@ -14,6 +15,7 @@ namespace Singularity.Apps {
         public signal void close_requested (LeafPane leaf);
 
         public LeafCell () {
+            cell_id = GLib.Uuid.string_random ();
             leaves = new ArrayList<LeafPane> ();
             title_handlers = new HashMap<LeafPane, ulong> ();
             tabs = new Singularity.Widgets.TabContainer ();
