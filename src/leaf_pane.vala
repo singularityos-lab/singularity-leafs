@@ -75,7 +75,7 @@ namespace Singularity.Apps {
                 _state_dir, "command-%s.state".printf (pane_id));
             ensure_state_dir ();
 
-            terminal = new Vte.Terminal ();
+            terminal = new LeafTerminal ();
             terminal.hexpand = true;
             terminal.vexpand = true;
             _apply_settings (settings);

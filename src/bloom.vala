@@ -59,7 +59,7 @@ namespace Singularity.Apps {
 
         public static void spawn (GLib.Settings settings, Gtk.Overlay overlay,
                                   string label, string command, string? cwd, int x, int y) {
-            var terminal = new Vte.Terminal ();
+            var terminal = new LeafTerminal ();
             terminal.hexpand = true;
             terminal.vexpand = true;
             terminal.set_size (20, 4);
