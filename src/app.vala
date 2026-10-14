@@ -1010,7 +1010,8 @@ namespace Singularity.Apps {
 
             var tree = ensure_window_layout (win);
             if (tree != null && tree.root != null)
-                win.leaves_box.append (build_tiled_widget (win, tree.root));
+                win.leaves_box.append (build_tiled_widget (win, tree.root,
+                    win.leaves_box.get_width (), win.leaves_box.get_height ()));
 
             foreach (var cell in cells)
                 foreach (var leaf in cell.leaves)
@@ -1060,7 +1061,7 @@ namespace Singularity.Apps {
             return tree;
         }
 
-        private Gtk.Widget build_tiled_widget (LeafsWindow win, Singularity.TileNode node) {
+        private Gtk.Widget build_tiled_widget (LeafsWindow win, Singularity.TileNode node, int width, int height) {
             if (node.tile != null) {
                 var cell = cell_by_id (win, node.tile);
                 return cell != null ? cell.tabs : new Gtk.Box (Orientation.VERTICAL, 0);
@@ -1069,7 +1070,7 @@ namespace Singularity.Apps {
             var start = node.start;
             var end = node.end;
             if (start == null || end == null)
-                return start != null ? build_tiled_widget (win, start) : build_tiled_widget (win, end);
+                return start != null ? build_tiled_widget (win, start, width, height) : build_tiled_widget (win, end, width, height);
 
             var paned = new Gtk.Paned (node.orientation);
             paned.add_css_class ("leaf-paned");
@@ -1077,17 +1078,26 @@ namespace Singularity.Apps {
             paned.resize_end_child = true;
             paned.shrink_start_child = false;
             paned.shrink_end_child = false;
-            paned.set_start_child (build_tiled_widget (win, start));
-            paned.set_end_child (build_tiled_widget (win, end));
-
             double ratio = LeafLayout.position_ratio (node);
             var orientation = node.orientation;
+            bool horizontal = orientation == Orientation.HORIZONTAL;
+            int span = horizontal ? width : height;
+            if (span > 1) {
+                int first = (int) Math.round (span * ratio);
+                int second = int.max (0, span - first);
+                paned.position = first;
+                paned.set_start_child (build_tiled_widget (win, start, horizontal ? first : width, horizontal ? height : first));
+                paned.set_end_child (build_tiled_widget (win, end, horizontal ? second : width, horizontal ? height : second));
+                return paned;
+            }
+            paned.set_start_child (build_tiled_widget (win, start, 0, 0));
+            paned.set_end_child (build_tiled_widget (win, end, 0, 0));
             GLib.Idle.add (() => {
-                int span = orientation == Orientation.HORIZONTAL
+                int size = orientation == Orientation.HORIZONTAL
                     ? paned.get_width ()
                     : paned.get_height ();
-                if (span > 1)
-                    paned.position = (int) Math.round (span * ratio);
+                if (size > 1)
+                    paned.position = (int) Math.round (size * ratio);
                 return GLib.Source.REMOVE;
             });
             return paned;
