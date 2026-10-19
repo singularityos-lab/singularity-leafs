@@ -11,8 +11,8 @@ if [ ! -e "$marker" ]; then
     [ -n "$cols" ] && [ "$cols" -gt 20 ] || cols=80
     printf '\033[1;31mHOST SHELL\033[0m\n\n'
     printf '%s\n\n%s\n' \
-        'This shell runs directly on Sinty OS, outside the ush sandbox that normally protects your system and your files. Anything you run here can read, change or delete whatever your account can reach, and nothing will stop it first.' \
-        'Continue only if you know what you are doing.' | fold -s -w "$cols"
+        'This shell runs directly on Sinty OS, outside the ush sandbox that normally protects your system and your files. Anything you run here can read, change or delete whatever your account can reach. A single mistyped command, such as rm -rf on the wrong folder, can erase your files for good.' \
+        'Your home and personal folders cannot be deleted from here, and a program that deletes many files is paused until you allow it. That only limits the damage; it does not undo it. Continue only if you know what you are doing.' | fold -s -w "$cols"
     printf '\nType \033[1m"yes"\033[0m to continue, or \033[1m"yes, always"\033[0m to continue and never ask again. Anything else closes this terminal.\n' | fold -s -w "$cols"
     printf '\n> '
     IFS= read -r answer || exit 1
@@ -26,6 +26,7 @@ if [ ! -e "$marker" ]; then
     printf '\n'
 fi
 export PS1='\[\033[1;31m\]host\[\033[0m\] \w \$ '
+[ -x /usr/bin/ush ] && exec /usr/bin/ush --guard -- "$1" -l
 exec "$1" -l
 """;
 
