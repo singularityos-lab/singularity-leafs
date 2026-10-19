@@ -18,6 +18,7 @@ namespace Singularity.Apps {
         Intl.bind_textdomain_codeset("singularity-leafs", "UTF-8");
         Intl.textdomain("singularity-leafs");
 
+        host_shell_mode = "--host-shell" in args;
         var app = new LeafsApp ();
         new LeafsSearchProvider (app).export (app);
         return app.run (args);

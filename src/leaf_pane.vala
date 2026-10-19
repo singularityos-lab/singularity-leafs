@@ -82,7 +82,13 @@ namespace Singularity.Apps {
 
             string shell = resolve_login_shell ();
             string[] envv = build_shell_environment ();
-            string[] argv = spawn_cmd ?? shell_argv (shell);
+            string[] argv;
+            if (spawn_cmd != null)
+                argv = spawn_cmd;
+            else if (host_shell_mode)
+                argv = host_shell_argv ();
+            else
+                argv = shell_argv (shell);
 
             show_previous_context ();
 
@@ -572,9 +578,9 @@ esac
             vte.set_font (font_desc);
             vte.set_scrollback_lines (s.get_int ("scrollback-lines"));
 
-            string scheme = s.get_string ("color-scheme");
+            string scheme = host_shell_mode ? "auto" : s.get_string ("color-scheme");
             var theme = (scheme == "auto")
-                ? Singularity.Core.TerminalThemes.make_auto_theme (auto_is_dark ())
+                ? Singularity.Core.TerminalThemes.make_auto_theme (host_shell_mode || auto_is_dark ())
                 : Singularity.Core.TerminalThemes.get_by_id (scheme);
             if (theme == null)
                 theme = Singularity.Core.TerminalThemes.get_by_id ("onedark");

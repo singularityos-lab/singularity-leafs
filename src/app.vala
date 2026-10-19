@@ -44,13 +44,25 @@ namespace Singularity.Apps {
         public LeafsApp () {
 #if DEVEL
             Object (application_id: "dev.sinty.leafs-devel",
-                    flags: ApplicationFlags.HANDLES_COMMAND_LINE);
+                    flags: host_shell_flags ());
             GLib.Environment.set_prgname ("dev.sinty.leafs-devel");
 #else
             Object (application_id: "dev.sinty.leafs",
-                    flags: ApplicationFlags.HANDLES_COMMAND_LINE);
+                    flags: host_shell_flags ());
             GLib.Environment.set_prgname ("dev.sinty.leafs");
 #endif
+        }
+
+        private static ApplicationFlags host_shell_flags () {
+            if (host_shell_mode)
+                return ApplicationFlags.HANDLES_COMMAND_LINE | ApplicationFlags.NON_UNIQUE;
+            return ApplicationFlags.HANDLES_COMMAND_LINE;
+        }
+
+        private void force_host_shell_accent () {
+            var style = Singularity.Style.StyleManager.get_default ();
+            if (style.accent_hex.down () != HOST_SHELL_ACCENT)
+                style.apply_accent_color (HOST_SHELL_ACCENT);
         }
 
         // Pull the command to run out of a terminal-style argv: everything
@@ -175,6 +187,15 @@ namespace Singularity.Apps {
         protected override void startup () {
             base.startup ();
             setup_styles ();
+            if (host_shell_mode) {
+                force_host_shell_accent ();
+                Singularity.Style.StyleManager.get_default ().notify["accent-hex"].connect (() => {
+                    Idle.add (() => {
+                        force_host_shell_accent ();
+                        return Source.REMOVE;
+                    });
+                });
+            }
 
             var menu = new GLib.Menu ();
             var file_menu = new GLib.Menu ();
@@ -390,7 +411,10 @@ namespace Singularity.Apps {
             load_ssh_sessions ();
             load_blooms ();
             update_dock_menu ();
-            if (_startup_cmd != null) {
+            if (host_shell_mode) {
+                main_window.set_title (_("Host Shell"));
+                add_leaf (null, null);
+            } else if (_startup_cmd != null) {
                 // Launched as a terminal for a specific command: skip session
                 // restore and open just that command.
                 add_leaf_cmd (_startup_cmd);
@@ -1148,7 +1172,7 @@ namespace Singularity.Apps {
         }
 
         private void sync_window_chrome () {
-            bool dark = terminal_is_dark ();
+            bool dark = host_shell_mode || terminal_is_dark ();
             Gtk.Settings.get_default ().gtk_application_prefer_dark_theme = dark;
             Singularity.Style.StyleManager.get_default ().apply_color_scheme (dark);
         }
@@ -1175,6 +1199,7 @@ namespace Singularity.Apps {
         }
 
         private void save_session () {
+            if (host_shell_mode) return;
             update_edit_actions ();
             if (leaves == null || main_window == null) return;
             foreach (var leaf in leaves)
