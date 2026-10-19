@@ -7,7 +7,13 @@ namespace Singularity.Apps {
     private const string HOST_SHELL_GATE = """
 marker="${XDG_CONFIG_HOME:-$HOME/.config}/singularity/leafs/host-shell-accepted"
 if [ ! -e "$marker" ]; then
+    tries=0
     cols=$(stty size 2>/dev/null | cut -d' ' -f2)
+    while [ "$cols" = 80 ] && [ $tries -lt 10 ]; do
+        sleep 0.1
+        cols=$(stty size 2>/dev/null | cut -d' ' -f2)
+        tries=$((tries + 1))
+    done
     [ -n "$cols" ] && [ "$cols" -gt 20 ] || cols=80
     printf '\033[1;31mHOST SHELL\033[0m\n\n'
     printf '%s\n\n%s\n' \
@@ -26,8 +32,19 @@ if [ ! -e "$marker" ]; then
     printf '\n'
 fi
 export PS1='\[\033[1;31m\]host\[\033[0m\] \w \$ '
-[ -x /usr/bin/ush ] && exec /usr/bin/ush --guard -- "$1" -l
-exec "$1" -l
+set -- "$1" -l
+case "$1" in
+*bash)
+    rc="${XDG_RUNTIME_DIR:-$HOME}/leafs-host-shell.rc"
+    {
+        printf '%s\n' '[ -r /etc/profile ] && . /etc/profile' '[ -r ~/.bashrc ] && . ~/.bashrc'
+        printf "PS1='%s'\n" "$PS1"
+    } > "$rc"
+    set -- "$1" --rcfile "$rc" -i
+    ;;
+esac
+[ -x /usr/bin/ush ] && exec /usr/bin/ush --guard -- "$@"
+exec "$@"
 """;
 
     internal string[] host_shell_argv () {
