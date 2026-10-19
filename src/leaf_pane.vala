@@ -537,7 +537,7 @@ esac
                 try {
                     var tex = clip.read_texture_async.end (res);
                     if (tex == null) { vte.paste_clipboard (); return; }
-                    string dir = "%s/leafs-pasted".printf (GLib.Environment.get_tmp_dir ());
+                    string dir = paste_dir ();
                     GLib.DirUtils.create_with_parents (dir, 0700);
                     string path = "%s/img-%d-%d.png".printf (dir,
                         (int) (GLib.get_real_time () / 1000000),
@@ -552,6 +552,13 @@ esac
                     vte.paste_clipboard ();
                 }
             });
+        }
+
+        private static string paste_dir () {
+            string ush = GLib.Path.build_filename (GLib.Environment.get_user_runtime_dir (), "ush");
+            if (GLib.FileUtils.test (ush, GLib.FileTest.IS_DIR))
+                return GLib.Path.build_filename (ush, "paste");
+            return "%s/leafs-pasted".printf (GLib.Environment.get_tmp_dir ());
         }
 
         private void _apply_settings (GLib.Settings settings) {
