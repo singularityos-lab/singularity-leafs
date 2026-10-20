@@ -40,6 +40,7 @@ namespace Singularity.Apps {
         // first leaf instead of restoring the previous session. Lets Leafs act
         // as a terminal emulator target (e.g. for GAppInfo NEEDS_TERMINAL).
         private string[]? _startup_cmd = null;
+        private string? _startup_dir = null;
 
         public LeafsApp () {
 #if DEVEL
@@ -92,6 +93,22 @@ namespace Singularity.Apps {
             string[] argv = cmdline.get_arguments ();
             string[]? cmd = extract_exec_command (argv);
             if (cmd != null) _startup_cmd = cmd;
+            for (int i = 1; i < argv.length; i++) {
+                if (argv[i].has_prefix ("--working-directory=")) _startup_dir = argv[i].substring (20);
+                else if ((argv[i] == "--working-directory" || argv[i] == "-w") && i + 1 < argv.length) _startup_dir = argv[++i];
+            }
+            if (_startup_dir != null && main_window != null) {
+                string dir = _startup_dir;
+                _startup_dir = null;
+                main_window.present ();
+                if (_startup_cmd != null) {
+                    insert_leaf_after (null, dir, null, _startup_cmd);
+                    _startup_cmd = null;
+                } else {
+                    add_leaf (dir, null);
+                }
+                return 0;
+            }
             if (cmd == null && "--new-window" in argv && main_window != null) {
                 open_flower (null);
                 return 0;
@@ -414,6 +431,11 @@ namespace Singularity.Apps {
             if (host_shell_mode) {
                 main_window.set_title (_("Host Shell"));
                 add_leaf (null, null);
+            } else if (_startup_dir != null) {
+                if (_startup_cmd != null) insert_leaf_after (null, _startup_dir, null, _startup_cmd);
+                else add_leaf (_startup_dir, null);
+                _startup_dir = null;
+                _startup_cmd = null;
             } else if (_startup_cmd != null) {
                 // Launched as a terminal for a specific command: skip session
                 // restore and open just that command.
