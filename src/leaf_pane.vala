@@ -43,6 +43,11 @@ namespace Singularity.Apps {
 
         private GLib.Settings _settings;
         private Gtk.DrawingArea _tile_drop_overlay;
+        private Gtk.DrawingArea _pause_overlay;
+        private Gtk.Button _pause_btn;
+        public bool paused { get; private set; default = false; }
+
+        private const int PAUSE_BUTTON_SIZE = 72;
         private Singularity.TileZone _tile_drop_zone = Singularity.TileZone.CENTER;
 
         public signal void close_requested     (LeafPane pane);
@@ -52,6 +57,7 @@ namespace Singularity.Apps {
         public signal void detach_requested    (LeafPane pane); 
         public signal void settings_requested  ();
         public signal void close_all_requested ();
+        public signal void pause_all_requested (bool pause);
         public signal void tile_drop_requested  (string source_id, LeafPane target,
                                                  Singularity.TileZone zone);
         public signal void state_changed        ();
@@ -217,6 +223,11 @@ namespace Singularity.Apps {
             menu_btn.visible = false;
             hover_controls.add_control (menu_btn);
 
+            _pause_btn = new Button.from_icon_name ("media-playback-pause-symbolic");
+            _pause_btn.tooltip_text = _("Pause Leaf");
+            _pause_btn.clicked.connect (() => pause (!paused));
+            hover_controls.add_control (_pause_btn);
+
             var settings_btn = new Button.from_icon_name ("emblem-system-symbolic");
             settings_btn.tooltip_text = _("Settings");
             settings_btn.clicked.connect (() => settings_requested ());
@@ -248,6 +259,23 @@ namespace Singularity.Apps {
             _tile_drop_overlay.visible = false;
             _tile_drop_overlay.set_draw_func (draw_tile_drop_zone);
             tile_overlay.add_overlay (_tile_drop_overlay);
+
+            _pause_overlay = new Gtk.DrawingArea ();
+            _pause_overlay.hexpand = true;
+            _pause_overlay.vexpand = true;
+            _pause_overlay.visible = false;
+            _pause_overlay.set_draw_func (draw_pause_button);
+            _pause_overlay.set_cursor_from_name ("pointer");
+            var resume_click = new Gtk.GestureClick ();
+            resume_click.released.connect ((n, x, y) => {
+                double cx = _pause_overlay.get_width () / 2.0;
+                double cy = _pause_overlay.get_height () / 2.0;
+                double r = PAUSE_BUTTON_SIZE / 2.0;
+                if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r)
+                    pause (false);
+            });
+            _pause_overlay.add_controller (resume_click);
+            tile_overlay.add_overlay (_pause_overlay);
             append (tile_overlay);
 
             var tile_target = new Gtk.DropTarget (
@@ -316,6 +344,77 @@ namespace Singularity.Apps {
             cr.set_source_rgba (accent.red, accent.green, accent.blue, 0.9);
             cr.set_line_width (2);
             cr.stroke ();
+        }
+
+        private void draw_pause_button (Gtk.DrawingArea area, Cairo.Context cr,
+                                        int width, int height) {
+            double r = PAUSE_BUTTON_SIZE / 2.0;
+            cr.translate (width / 2.0 - r, height / 2.0 - r);
+            cr.arc (r, r, r - 1, 0, 2 * Math.PI);
+            cr.set_source_rgba (0.08, 0.08, 0.08, 0.72);
+            cr.fill_preserve ();
+            cr.set_line_width (1.5);
+            cr.set_source_rgba (1, 1, 1, 0.35);
+            cr.stroke ();
+
+            double h = PAUSE_BUTTON_SIZE * 0.36;
+            double w = h * 0.9;
+            double x = r - w * 0.38;
+            cr.move_to (x, r - h / 2);
+            cr.line_to (x + w, r);
+            cr.line_to (x, r + h / 2);
+            cr.close_path ();
+            cr.set_line_join (Cairo.LineJoin.ROUND);
+            cr.set_line_width (4);
+            cr.set_source_rgba (1, 1, 1, 0.95);
+            cr.stroke_preserve ();
+            cr.fill ();
+        }
+
+        public void pause (bool pause) {
+            if (pause == paused || shell_pid <= 0 || _closing) return;
+            if (!signal_session (pause ? Posix.Signal.STOP : Posix.Signal.CONT)) return;
+            paused = pause;
+            terminal.input_enabled = !pause;
+            if (pause) terminal.add_css_class ("leafs-paused");
+            else terminal.remove_css_class ("leafs-paused");
+            _pause_overlay.visible = pause;
+            _pause_btn.icon_name = pause ? "media-playback-start-symbolic"
+                                         : "media-playback-pause-symbolic";
+            _pause_btn.tooltip_text = pause ? _("Resume Leaf") : _("Pause Leaf");
+            if (!pause) terminal.grab_focus ();
+        }
+
+        private bool signal_session (int sig) {
+            int session = session_of (shell_pid);
+            if (session <= 0) return Posix.kill (shell_pid, sig) == 0;
+            bool any = false;
+            try {
+                var dir = GLib.Dir.open ("/proc");
+                string? name;
+                while ((name = dir.read_name ()) != null) {
+                    int pid = int.parse (name);
+                    if (pid <= 0 || session_of (pid) != session) continue;
+                    if (Posix.kill (pid, sig) == 0) any = true;
+                }
+            } catch (Error e) {
+                return Posix.kill (shell_pid, sig) == 0;
+            }
+            return any;
+        }
+
+        private static int session_of (int pid) {
+            string stat;
+            try {
+                FileUtils.get_contents ("/proc/%d/stat".printf (pid), out stat);
+            } catch (Error e) {
+                return -1;
+            }
+            int end = stat.last_index_of_char (')');
+            if (end < 0) return -1;
+            string[] fields = stat.substring (end + 2).split (" ");
+            if (fields.length < 4) return -1;
+            return int.parse (fields[3]);
         }
 
         private void ensure_state_dir () {
@@ -481,8 +580,10 @@ esac
                 _snapshot_source = 0;
             }
             persist_state ();
-            if (shell_pid > 0)
+            if (shell_pid > 0) {
                 Posix.kill (shell_pid, Posix.Signal.HUP);
+                if (paused) signal_session (Posix.Signal.CONT);
+            }
         }
 
         private void write_private_file (string path, string contents) {
@@ -626,6 +727,13 @@ esac
                 menu.add_item ("Paste", "edit-paste-symbolic", () => smart_paste (vte));
                 menu.add_separator ();
                 menu.add_item ("Clear", "edit-clear-symbolic", () => vte.reset (true, true));
+                menu.add_separator ();
+                if (paused)
+                    menu.add_item ("Resume Leaf", "media-playback-start-symbolic", () => pause (false));
+                else
+                    menu.add_item ("Pause Leaf", "media-playback-pause-symbolic", () => pause (true));
+                menu.add_item ("Pause All Leafs", "media-playback-pause-symbolic", () => pause_all_requested (true));
+                menu.add_item ("Resume All Leafs", "media-playback-start-symbolic", () => pause_all_requested (false));
                 menu.popup ();
             });
             vte.add_controller (click);

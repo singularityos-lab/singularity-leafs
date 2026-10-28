@@ -603,6 +603,9 @@ namespace Singularity.Apps {
                 save_session ();
                 close_all_windows ();
             });
+            leaf.pause_all_requested.connect ((pause) => {
+                foreach (var l in leaves) l.pause (pause);
+            });
             leaf.tile_drop_requested.connect (on_tile_drop);
             leaf.state_changed.connect (queue_save_session);
             leaf.terminal.selection_changed.connect (update_edit_actions);
@@ -1554,6 +1557,9 @@ namespace Singularity.Apps {
         }
 
         private const string LEAFS_CSS = """
+            vte-terminal.leafs-paused {
+                filter: grayscale(1);
+            }
             .leafs-cheat-list {
                 background: transparent;
             }
