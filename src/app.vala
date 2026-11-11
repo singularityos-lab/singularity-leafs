@@ -410,6 +410,35 @@ namespace Singularity.Apps {
 
             sync_window_chrome ();
             install_glass_frame ();
+            LeafsIntents.install (this);
+        }
+
+        internal Gee.List<LeafPane> agent_leaves () {
+            if (main_window == null) activate ();
+            return leaves;
+        }
+
+        internal LeafPane? agent_focused () {
+            return leaves != null ? get_focused_leaf () : null;
+        }
+
+        internal Gtk.Window agent_window (LeafPane leaf) {
+            return window_of (leaf);
+        }
+
+        internal LeafPane agent_open (string? cwd, bool tab, string[]? cmd) {
+            if (main_window == null) activate ();
+            var before = new Gee.HashSet<LeafPane> ();
+            before.add_all (leaves);
+            var after = get_focused_leaf ();
+            if (tab) insert_tab_after (after, cwd, null, cmd);
+            else insert_leaf_after (after, cwd, null, cmd);
+            foreach (var l in leaves) if (!before.contains (l)) return l;
+            return leaves.last ();
+        }
+
+        internal void agent_close (LeafPane leaf) {
+            on_close_leaf (leaf);
         }
 
         protected override void activate () {
