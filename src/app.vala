@@ -1196,9 +1196,14 @@ namespace Singularity.Apps {
             Gtk.StyleContext.add_provider_for_display (display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER + 2);
         }
 
+        private int chrome_dark = -1;
+
         private void sync_window_chrome () {
             bool dark = host_shell_mode || terminal_is_dark ();
-            Gtk.Settings.get_default ().gtk_application_prefer_dark_theme = dark;
+            if (chrome_dark == (dark ? 1 : 0)) return;
+            chrome_dark = dark ? 1 : 0;
+            var gs = Gtk.Settings.get_default ();
+            if (gs.gtk_application_prefer_dark_theme != dark) gs.gtk_application_prefer_dark_theme = dark;
             Singularity.Style.StyleManager.get_default ().apply_color_scheme (dark);
         }
 
