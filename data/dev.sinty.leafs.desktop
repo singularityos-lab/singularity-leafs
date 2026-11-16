@@ -8,6 +8,7 @@ Icon=dev.sinty.leafs
 Exec=singularity-leafs
 Terminal=false
 Categories=System;TerminalEmulator;
+X-Sinty-FormFactors=desktop;tablet;phone
 Keywords=terminal;shell;console;leafs;
 StartupNotify=true
 StartupWMClass=dev.sinty.leafs

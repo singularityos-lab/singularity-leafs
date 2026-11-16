@@ -8,6 +8,7 @@ Icon=@APP_ID@
 Exec=singularity-leafs
 Terminal=false
 Categories=System;TerminalEmulator;
+X-Sinty-FormFactors=desktop;tablet;phone
 Keywords=terminal;shell;console;leafs;
 StartupNotify=true
 StartupWMClass=@APP_ID@
