@@ -14,7 +14,7 @@ namespace Singularity.Apps {
         public Gtk.Overlay bloom_overlay;
 
         public LeafsWindow (Gtk.Application app) {
-            Object (application: app);
+            Object (application: app, content_window_controls: true);
 #if DEVEL
             set_title (_("Leafs (Devel)"));
 #else
