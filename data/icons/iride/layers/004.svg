@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="236" height="236" viewBox="0 0 236 236" fill="none"><defs><radialGradient id="le_bloom" cx="70" cy="50" r="160" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="white" stop-opacity="0.34" /><stop offset="1" stop-color="white" stop-opacity="0" /></radialGradient>
+<clipPath id="le_clip"><path transform="rotate(40 118 118)" d="M118 10C170 42 196 96 184 146C174 190 144 214 118 218C92 214 62 190 52 146C40 96 66 42 118 10Z" /></clipPath>
+</defs><g clip-path="url(#le_clip)"><rect width="236" height="236" fill="url(#le_bloom)" />
+</g></svg>

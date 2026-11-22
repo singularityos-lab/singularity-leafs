@@ -1,0 +1,195 @@
+{
+ "format": 1,
+ "canvas": [
+  236,
+  236
+ ],
+ "box": [
+  0,
+  0,
+  236,
+  236
+ ],
+ "stack": [
+  {
+   "layer": "layers/000.svg",
+   "piece": "stem"
+  },
+  {
+   "layer": "layers/001.svg",
+   "piece": "stem"
+  },
+  {
+   "shadow": {
+    "dx": 0,
+    "dy": 5,
+    "blur": 6,
+    "color": "#0d1f0a",
+    "opacity": 0.42,
+    "region": [
+     -20,
+     -20,
+     276,
+     276
+    ]
+   },
+   "stack": [
+    {
+     "layer": "layers/002.svg",
+     "piece": "leaf"
+    },
+    {
+     "layer": "layers/003.svg",
+     "piece": "leaf"
+    }
+   ]
+  },
+  {
+   "layer": "layers/004.svg",
+   "piece": "leaf"
+  },
+  {
+   "layer": "layers/005.svg",
+   "piece": "leaf"
+  },
+  {
+   "rim": "M187.421 35.267C206.686 93.206 191.893 151.284 150.561 181.873C114.618 209.151 76.210 208.253 53.721 194.604C36.375 174.828 28.821 137.159 49.443 97.025C72.390 51.010 127.018 26.356 187.421 35.267Z",
+   "light": [
+    28.8,
+    26.4,
+    206.7,
+    209.2
+   ],
+   "piece": "leaf"
+  },
+  {
+   "shadow": {
+    "dx": 0,
+    "dy": 2,
+    "blur": 2,
+    "color": "#0b4a26",
+    "opacity": 0.3,
+    "region": [
+     -20,
+     -20,
+     276,
+     276
+    ]
+   },
+   "stack": [
+    {
+     "layer": "layers/007.svg",
+     "piece": "prompt"
+    },
+    {
+     "layer": "layers/008.svg",
+     "piece": "slider"
+    }
+   ]
+  }
+ ],
+ "motion": [
+  {
+   "piece": "stem",
+   "origin": [
+    42.48,
+    200.6
+   ],
+   "tracks": [
+    {
+     "kind": "scale",
+     "from": [
+      0.3,
+      0.3
+     ],
+     "at": 0,
+     "duration": 300,
+     "ease": "spring"
+    }
+   ]
+  },
+  {
+   "piece": "leaf",
+   "origin": [
+    42.48,
+    200.6
+   ],
+   "tracks": [
+    {
+     "kind": "scale",
+     "from": [
+      0.35,
+      0.35
+     ],
+     "at": 60,
+     "duration": 460,
+     "ease": "spring"
+    },
+    {
+     "kind": "rotate",
+     "from": [
+      -28
+     ],
+     "at": 60,
+     "duration": 460,
+     "ease": "spring"
+    },
+    {
+     "kind": "opacity",
+     "from": [
+      0
+     ],
+     "at": 60,
+     "duration": 120,
+     "ease": "out"
+    }
+   ]
+  },
+  {
+   "piece": "prompt",
+   "origin": [
+    89.0,
+    124.0
+   ],
+   "tracks": [
+    {
+     "kind": "translate",
+     "from": [
+      -18.88,
+      0
+     ],
+     "at": 420,
+     "duration": 230,
+     "ease": "out"
+    },
+    {
+     "kind": "opacity",
+     "from": [
+      0
+     ],
+     "at": 420,
+     "duration": 120,
+     "ease": "out"
+    }
+   ]
+  },
+  {
+   "piece": "slider",
+   "origin": [
+    132.0,
+    148.0
+   ],
+   "tracks": [
+    {
+     "kind": "opacity",
+     "from": [
+      0
+     ],
+     "at": 620,
+     "duration": 160,
+     "ease": "steps"
+    }
+   ]
+  }
+ ]
+}
