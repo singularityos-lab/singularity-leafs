@@ -150,3 +150,24 @@ if iride.found() and not get_option('develop')
     install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps'
   )
 endif
+
+if iride.found() and get_option('develop')
+  custom_target('iride-icon-dev-sinty-leafs-devel',
+    input: 'data/icons/iride/dev.sinty.leafs-devel/iride.json',
+    output: 'dev.sinty.leafs-devel.iride',
+    depend_files: files(
+      'data/icons/iride/dev.sinty.leafs-devel/layers/000.svg',
+      'data/icons/iride/dev.sinty.leafs-devel/layers/001.svg',
+      'data/icons/iride/dev.sinty.leafs-devel/layers/002.svg',
+      'data/icons/iride/dev.sinty.leafs-devel/layers/003.svg',
+      'data/icons/iride/dev.sinty.leafs-devel/layers/004.svg',
+      'data/icons/iride/dev.sinty.leafs-devel/layers/005.svg',
+      'data/icons/iride/dev.sinty.leafs-devel/layers/006.svg',
+      'data/icons/iride/dev.sinty.leafs-devel/layers/007.svg',
+      'data/icons/iride/dev.sinty.leafs-devel/layers/008.svg',
+    ),
+    command: [iride, 'build', meson.current_source_dir() / 'data' / 'icons' / 'iride' / 'dev.sinty.leafs-devel', '@OUTPUT@'],
+    install: true,
+    install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps'
+  )
+endif
