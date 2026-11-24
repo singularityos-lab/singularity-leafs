@@ -21,8 +21,10 @@ namespace Singularity.Apps {
             set_title (_("Leafs"));
 #endif
             set_default_size (600, 600);
-            toolbar.is_static = false;
-            toolbar.visible = false;
+            if (floating_bubbles) {
+                toolbar.is_static = false;
+                toolbar.visible = false;
+            }
 
             bloom_overlay = new Gtk.Overlay ();
             bloom_overlay.set_child (leaves_box);
