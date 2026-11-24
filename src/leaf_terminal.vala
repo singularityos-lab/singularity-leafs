@@ -1,6 +1,6 @@
 namespace Singularity.Apps {
 
-    public class LeafTerminal : Vte.Terminal {
+    public class LeafTerminal : Vte.Terminal, Singularity.Migration.Stateful {
         private const uint SETTLE_MS = 180;
 
         private long columns = -1;
@@ -29,6 +29,18 @@ namespace Singularity.Apps {
             if (pty == null) return;
             Posix.pid_t group = Posix.tcgetpgrp (pty.get_fd ());
             if (group > 0) Posix.killpg (group, Posix.Signal.WINCH);
+        }
+
+        public Variant? save_widget_state () {
+            var adjustment = get_vadjustment ();
+            if (adjustment == null) return null;
+            return new Variant.double (adjustment.upper - adjustment.page_size - adjustment.value);
+        }
+
+        public void restore_widget_state (Variant state) {
+            var adjustment = get_vadjustment ();
+            if (adjustment == null || !state.is_of_type (VariantType.DOUBLE)) return;
+            adjustment.value = adjustment.upper - adjustment.page_size - state.get_double ();
         }
 
         public override void dispose () {

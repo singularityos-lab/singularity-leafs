@@ -7,7 +7,7 @@ using Gee;
 
 namespace Singularity.Apps {
 
-    public class LeafsApp : Singularity.Application, Singularity.Startup.Bootable {
+    public class LeafsApp : Singularity.Application, Singularity.Startup.Bootable, Singularity.Migration.Migratable {
         // Primary window; "flowers" are additional LeafsWindow instances.
         private LeafsWindow main_window;
         private ArrayList<LeafPane> leaves;
@@ -473,13 +473,8 @@ namespace Singularity.Apps {
                 }
                 return;
             }
-            leaves       = new ArrayList<LeafPane> ();
-            ssh_sessions = new ArrayList<SshSession> ();
-            blooms       = new ArrayList<BloomDef> ();
+            ensure_model ();
             build_window ();
-            load_ssh_sessions ();
-            load_blooms ();
-            update_dock_menu ();
             if (host_shell_mode) {
                 main_window.set_title (_("Host Shell"));
                 add_leaf (null, null);
@@ -499,6 +494,125 @@ namespace Singularity.Apps {
             }
             update_edit_actions ();
             main_window.present ();
+        }
+
+        private void ensure_model () {
+            if (leaves != null) return;
+            leaves       = new ArrayList<LeafPane> ();
+            ssh_sessions = new ArrayList<SshSession> ();
+            blooms       = new ArrayList<BloomDef> ();
+            load_ssh_sessions ();
+            load_blooms ();
+            update_dock_menu ();
+        }
+
+        public Variant save_model () {
+            return new VariantDict ().end ();
+        }
+
+        public async void restore_model (Variant model) throws Error {
+        }
+
+        public string window_kind (Gtk.Window w) {
+            if (w == main_window) return "main";
+            return (w is LeafsWindow && flowers.contains ((LeafsWindow) w)) ? "flower" : "";
+        }
+
+        public Variant save_window (Gtk.Window w) {
+            var win = (LeafsWindow) w;
+            var builder = new Json.Builder ();
+            append_window_session (builder, win, win == main_window);
+            var gen = new Json.Generator ();
+            gen.set_root (builder.get_root ());
+            var moved = new VariantBuilder (new VariantType ("a{sv}"));
+            if (window_cells.has_key (win)) {
+                foreach (var cell in window_cells[win])
+                    foreach (var leaf in cell.leaves)
+                        moved.add ("{sv}", leaf.pane_id, leaf.save_move ());
+            }
+            var d = new VariantDict ();
+            d.insert_value ("session", new Variant.string (gen.to_data (null)));
+            d.insert_value ("leaves", moved.end ());
+            return d.end ();
+        }
+
+        public void prepare_move () throws Singularity.Migration.MigrationError {
+            if (host_shell_mode)
+                throw new Singularity.Migration.MigrationError.UNSUPPORTED (
+                    _("The host shell cannot leave this device"));
+            foreach (var w in get_windows ()) {
+                var win = w as LeafsWindow;
+                if (win == null || !window_cells.has_key (win)) continue;
+                foreach (var cell in window_cells[win])
+                    foreach (var leaf in cell.leaves)
+                        leaf.prepare_move ();
+            }
+        }
+
+        public async Gtk.Window? rebuild_window (string kind, Variant data) throws Error {
+            if (kind != "main" && kind != "flower") return null;
+            ensure_model ();
+            forget_closed_windows ();
+            if (kind == "main" && main_window != null && pristine_window (main_window)) {
+                var start = main_window;
+                foreach (var cell in window_cells[start])
+                    foreach (var leaf in cell.leaves)
+                        leaf.prepare_close ();
+                start.destroy ();
+                forget_closed_windows ();
+            }
+            LeafsWindow win;
+            if (kind == "main" && main_window == null) {
+                build_window ();
+                win = main_window;
+            } else {
+                win = create_flower_window ();
+            }
+            var d = new VariantDict (data);
+            var session = d.lookup_value ("session", VariantType.STRING);
+            var moved = d.lookup_value ("leaves", VariantType.VARDICT);
+            var parser = new Json.Parser ();
+            parser.load_from_data (session != null ? session.get_string () : "{}");
+            var root = parser.get_root ();
+            restoring_session = true;
+            if (root != null && root.get_node_type () == Json.NodeType.OBJECT)
+                restore_window_session (root.get_object (), win,
+                    moved != null ? new VariantDict (moved) : null);
+            restoring_session = false;
+            update_edit_actions ();
+            win.present ();
+            foreach (var cell in window_cells[win])
+                foreach (var leaf in cell.leaves)
+                    yield leaf.wait_moved ();
+            queue_save_session ();
+            return win;
+        }
+
+        private bool pristine_window (LeafsWindow win) {
+            if (!window_cells.has_key (win) || window_cells[win].size != 1) return false;
+            var cell = window_cells[win][0];
+            if (cell.leaves.size != 1) return false;
+            return cell.leaves[0].pristine ();
+        }
+
+        private void forget_closed_windows () {
+            unowned GLib.List<Gtk.Window> open = get_windows ();
+            var closed = new ArrayList<LeafsWindow> ();
+            foreach (var win in window_cells.keys)
+                if (open.find (win) == null) closed.add (win);
+            foreach (var win in closed) {
+                foreach (var cell in window_cells[win]) {
+                    foreach (var leaf in cell.leaves) {
+                        leaves.remove (leaf);
+                        leaf_window.unset (leaf);
+                        leaf_cell.unset (leaf);
+                    }
+                }
+                window_cells.unset (win);
+                window_layout.unset (win);
+                flowers.remove (win);
+                if (win == main_window) main_window = null;
+            }
         }
 
         protected override void shutdown () {
@@ -1389,50 +1503,63 @@ namespace Singularity.Apps {
                 } else {
                     win = create_flower_window ();
                 }
-
-                var cells = saved_window.get_array_member ("cells");
-                for (uint j = 0; j < cells.get_length (); j++) {
-                    var saved_cell = cells.get_object_element (j);
-                    if (saved_cell == null || !saved_cell.has_member ("leaves")) continue;
-                    var cell = new LeafCell ();
-                    cell.close_requested.connect (on_close_leaf);
-                    var saved_leaves = saved_cell.get_array_member ("leaves");
-                    for (uint k = 0; k < saved_leaves.get_length (); k++) {
-                        var saved_leaf = saved_leaves.get_object_element (k);
-                        if (saved_leaf != null)
-                            restore_leaf (saved_leaf, win, cell);
-                    }
-                    if (cell.leaves.is_empty) continue;
-                    window_cells[win].add (cell);
-                    int active = saved_cell.has_member ("active")
-                        ? (int) saved_cell.get_int_member ("active")
-                        : 0;
-                    cell.tabs.notebook.set_current_page (
-                        active.clamp (0, cell.leaves.size - 1));
-                }
-                if (saved_window.has_member ("layout")) {
-                    var layout = LeafLayout.read (
-                        saved_window.get_object_member ("layout"), cell_ids (win));
-                    if (layout != null)
-                        window_layout[win] = layout;
-                }
-                rebuild_separators_in (win);
+                restore_window_session (saved_window, win);
                 if (win != main_window)
                     win.present ();
             }
         }
 
-        private void restore_leaf (Json.Object saved, LeafsWindow win, LeafCell cell) {
+        private void restore_window_session (Json.Object saved_window, LeafsWindow win,
+                                             VariantDict? moved = null) {
+            var cells = saved_window.get_array_member ("cells");
+            for (uint j = 0; j < cells.get_length (); j++) {
+                var saved_cell = cells.get_object_element (j);
+                if (saved_cell == null || !saved_cell.has_member ("leaves")) continue;
+                var cell = new LeafCell ();
+                cell.close_requested.connect (on_close_leaf);
+                var saved_leaves = saved_cell.get_array_member ("leaves");
+                for (uint k = 0; k < saved_leaves.get_length (); k++) {
+                    var saved_leaf = saved_leaves.get_object_element (k);
+                    if (saved_leaf != null)
+                        restore_leaf (saved_leaf, win, cell, moved);
+                }
+                if (cell.leaves.is_empty) continue;
+                window_cells[win].add (cell);
+                int active = saved_cell.has_member ("active")
+                    ? (int) saved_cell.get_int_member ("active")
+                    : 0;
+                cell.tabs.notebook.set_current_page (
+                    active.clamp (0, cell.leaves.size - 1));
+            }
+            if (saved_window.has_member ("layout")) {
+                var layout = LeafLayout.read (
+                    saved_window.get_object_member ("layout"), cell_ids (win));
+                if (layout != null)
+                    window_layout[win] = layout;
+            }
+            rebuild_separators_in (win);
+        }
+
+        private void restore_leaf (Json.Object saved, LeafsWindow win, LeafCell cell,
+                                   VariantDict? moved = null) {
             string cwd = saved.has_member ("cwd")
                 ? saved.get_string_member ("cwd")
                 : GLib.Environment.get_home_dir ();
             string id = saved.has_member ("id")
                 ? saved.get_string_member ("id")
                 : GLib.Uuid.string_random ();
+            Variant? state = moved != null ? moved.lookup_value (id, VariantType.VARDICT) : null;
+            if (state != null) {
+                var portable = new VariantDict (state).lookup_value ("cwd", VariantType.STRING);
+                if (portable != null)
+                    cwd = Singularity.Migration.local_file (portable.get_string ()).get_path () ?? cwd;
+                if (leaf_by_id (id) != null)
+                    id = GLib.Uuid.string_random ();
+            }
             if (!FileUtils.test (cwd, FileTest.IS_DIR))
                 cwd = GLib.Environment.get_home_dir ();
 
-            var leaf = new LeafPane (settings, cwd, id);
+            var leaf = new LeafPane (settings, cwd, id, null, state);
             connect_leaf_signals (leaf);
             leaves.add (leaf);
             leaf_window[leaf] = win;

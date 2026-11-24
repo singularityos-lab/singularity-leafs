@@ -32,7 +32,12 @@ namespace Singularity.Apps {
         private uint _snapshot_source = 0;
         private bool _closing = false;
         private bool _direct_command = false;
+        private string? _moved_line = null;
+        private bool _moved_paused = false;
+        private int64 _last_output = 0;
 
+        private const int MOVE_MS = 4000;
+        private const int QUIET_MS = 150;
         private const int SNAPSHOT_MAX_LINES = 200;
         private const int SNAPSHOT_MAX_CHARS = 65536;
         private const string SNAPSHOT_SEPARATOR = "------------------------------------------------";
@@ -63,7 +68,7 @@ namespace Singularity.Apps {
         public signal void state_changed        ();
 
         public LeafPane (GLib.Settings settings, string? cwd = null, string? id = null,
-                         string[]? spawn_cmd = null) {
+                         string[]? spawn_cmd = null, Variant? moved = null) {
             Object (orientation: Orientation.VERTICAL, spacing: 0);
             hexpand = true;
             vexpand = true;
@@ -80,6 +85,7 @@ namespace Singularity.Apps {
             _command_state_path = GLib.Path.build_filename (
                 _state_dir, "command-%s.state".printf (pane_id));
             ensure_state_dir ();
+            if (moved != null) restore_moved_files (moved);
 
             terminal = new LeafTerminal ();
             terminal.hexpand = true;
@@ -96,7 +102,8 @@ namespace Singularity.Apps {
             else
                 argv = shell_argv (shell);
 
-            show_previous_context ();
+            if (moved != null) show_moved_context (moved);
+            else show_previous_context ();
 
             terminal.spawn_async (
                 Vte.PtyFlags.DEFAULT,
@@ -118,6 +125,7 @@ namespace Singularity.Apps {
                     close_requested (this);
             });
             terminal.contents_changed.connect (queue_snapshot);
+            terminal.contents_changed.connect (() => _last_output = GLib.get_monotonic_time ());
             terminal.current_directory_uri_changed.connect (() => state_changed ());
 
             if (spawn_cmd != null && spawn_cmd.length > 0 &&
@@ -501,6 +509,104 @@ esac
             string display = context.replace ("\r", "").replace ("\n", "\r\n");
             display += "\r\n" + SNAPSHOT_SEPARATOR + "\r\n";
             terminal.feed (display.data);
+        }
+
+        public void prepare_move () throws Singularity.Migration.MigrationError {
+            if (ssh_host != null)
+                throw new Singularity.Migration.MigrationError.UNSUPPORTED (
+                    _("Disconnect from %s before moving Leafs").printf (ssh_host));
+            if (_direct_command)
+                throw new Singularity.Migration.MigrationError.UNSUPPORTED (
+                    _("Close the leaf running a command before moving Leafs"));
+            var pty = terminal.get_pty ();
+            if (pty == null || shell_pid <= 0) return;
+            Posix.pid_t group = Posix.tcgetpgrp (pty.get_fd ());
+            if (group > 0 && group != shell_pid) {
+                string? title = terminal.get_window_title ();
+                throw new Singularity.Migration.MigrationError.UNSUPPORTED (
+                    _("Wait for the command in %s to finish before moving Leafs").printf (
+                        title != null && title.strip () != "" ? title.strip () : _("Terminal")));
+            }
+        }
+
+        public bool pristine () {
+            if (ssh_host != null || _direct_command || _moved_line != null) return false;
+            if (read_private_file (_history_path).strip () != "") return false;
+            long column, row;
+            terminal.get_cursor_position (out column, out row);
+            var adjustment = terminal.get_vadjustment ();
+            return row == (adjustment != null ? (long) adjustment.lower : 0);
+        }
+
+        public Variant save_move () {
+            var screen = new LeafScreen (terminal);
+            var d = new VariantDict ();
+            d.insert_value ("cwd", new Variant.string (
+                Singularity.Migration.portable_path (File.new_for_path (get_working_dir ()))));
+            d.insert_value ("screen", new Variant.string (screen.before));
+            d.insert_value ("line", new Variant.string (screen.line));
+            d.insert_value ("history", new Variant.string (read_private_file (_history_path)));
+            d.insert_value ("command", new Variant.string (read_private_file (_command_state_path)));
+            d.insert_value ("paused", new Variant.boolean (paused));
+            return d.end ();
+        }
+
+        public async void wait_moved () {
+            if (_moved_line == null) return;
+            string line = _moved_line;
+            _moved_line = null;
+            bool typed = false;
+            long columns = terminal.get_column_count ();
+            int64 deadline = GLib.get_monotonic_time () + MOVE_MS * 1000;
+            while (GLib.get_monotonic_time () < deadline) {
+                if (terminal.get_column_count () != columns) {
+                    columns = terminal.get_column_count ();
+                    _last_output = GLib.get_monotonic_time ();
+                }
+                string current = new LeafScreen (terminal).line;
+                bool quiet = GLib.get_monotonic_time () - _last_output > QUIET_MS * 1000;
+                if (quiet && terminal.get_mapped () && shell_pid > 0 && current != "") {
+                    if (current == line || !line.has_prefix (current)) break;
+                    if (!typed) {
+                        terminal.feed_child (line.substring (current.length).data);
+                        typed = true;
+                        _last_output = GLib.get_monotonic_time ();
+                    }
+                }
+                GLib.Timeout.add (40, wait_moved.callback);
+                yield;
+            }
+            if (_moved_paused) pause (true);
+        }
+
+        private void restore_moved_files (Variant moved) {
+            var d = new VariantDict (moved);
+            var history = d.lookup_value ("history", VariantType.STRING);
+            if (history != null) write_private_file (_history_path, history.get_string ());
+            var command = d.lookup_value ("command", VariantType.STRING);
+            if (command != null && command.get_string () != "")
+                write_private_file (_command_state_path, command.get_string ());
+        }
+
+        private void show_moved_context (Variant moved) {
+            var d = new VariantDict (moved);
+            var screen = d.lookup_value ("screen", VariantType.STRING);
+            if (screen != null && screen.get_string () != "")
+                terminal.feed (screen.get_string ().data);
+            var line = d.lookup_value ("line", VariantType.STRING);
+            _moved_line = line != null ? line.get_string () : "";
+            var was_paused = d.lookup_value ("paused", VariantType.BOOLEAN);
+            _moved_paused = was_paused != null && was_paused.get_boolean ();
+        }
+
+        private string read_private_file (string path) {
+            string contents = "";
+            try {
+                FileUtils.get_contents (path, out contents);
+            } catch (Error e) {
+                return "";
+            }
+            return contents;
         }
 
         private string sanitize_context (string context) {
