@@ -7,7 +7,7 @@ using Gee;
 
 namespace Singularity.Apps {
 
-    public class LeafsApp : Singularity.Application {
+    public class LeafsApp : Singularity.Application, Singularity.Startup.Bootable {
         // Primary window; "flowers" are additional LeafsWindow instances.
         private LeafsWindow main_window;
         private ArrayList<LeafPane> leaves;
@@ -144,7 +144,7 @@ namespace Singularity.Apps {
         }
 
         public void open_ssh_target (string target) {
-            activate ();
+            show_window ();
             if (target.has_prefix ("session:")) {
                 string id = target.substring (8);
                 foreach (var s in saved_ssh_sessions ()) {
@@ -414,7 +414,7 @@ namespace Singularity.Apps {
         }
 
         internal Gee.List<LeafPane> agent_leaves () {
-            if (main_window == null) activate ();
+            if (main_window == null) show_window ();
             return leaves;
         }
 
@@ -427,7 +427,7 @@ namespace Singularity.Apps {
         }
 
         internal LeafPane agent_open (string? cwd, bool tab, string[]? cmd) {
-            if (main_window == null) activate ();
+            if (main_window == null) show_window ();
             var before = new Gee.HashSet<LeafPane> ();
             before.add_all (leaves);
             var after = get_focused_leaf ();
@@ -441,7 +441,30 @@ namespace Singularity.Apps {
             on_close_leaf (leaf);
         }
 
-        protected override void activate () {
+        public Singularity.Startup.Plan build_plan (Singularity.Startup.Request request) {
+            var plan = new Singularity.Startup.Plan ();
+            plan.version = "leafs-1";
+            if (request.kind == Singularity.Startup.RequestKind.SERVICE) {
+                plan.main ("ready", Singularity.Startup.Category.PREPARE, (c) => {})
+                    .reaches (Singularity.Startup.Milestone.SHELL_READY)
+                    .reaches (Singularity.Startup.Milestone.CONTENT_READY)
+                    .reaches (Singularity.Startup.Milestone.INTERACTIVE);
+                return plan;
+            }
+            plan.main ("window", Singularity.Startup.Category.SHELL, (c) => {
+                show_window ();
+                c.window = main_window;
+            }).reaches (Singularity.Startup.Milestone.SHELL_READY)
+              .reaches (Singularity.Startup.Milestone.CONTENT_READY)
+              .reaches (Singularity.Startup.Milestone.INTERACTIVE);
+            return plan;
+        }
+
+        public void handle_request (Singularity.Startup.Request request) {
+            show_window ();
+        }
+
+        private void show_window () {
             if (main_window != null) {
                 main_window.present ();
                 if (_startup_cmd != null) {
